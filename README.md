@@ -28,7 +28,14 @@ Defensive: 공격·탐지 시나리오 → 방어 계획 → 실제 로그 기�
 
 Offensive의 ARTEX 작업이 기록한 취약점에서 대상 자산, 경로, 설명과 재현 근거를 확인합니다. 이 정보가 방어 시나리오의 입력입니다. 작업 완료나 후보 발견만으로 악용 성공을 확정하지 않습니다.
 
+<<<<<<< HEAD
 ![취약점 상세의 근거와 재검증 기록](docs/guide-images/finding-overview-20261022.jpg)
+=======
+- v1.0 : aegisloop offensive + defensive + loop.
+- v1.1 : aegisloop offensive(API 진단 & 소스코드 진단 기능 추가) + defensive + loop.
+
+### Offensive · 취약점 진단
+>>>>>>> d30c0769d00a075dce76f173a0c4323e717818a3
 
 ### 2. 방어 검증
 
