@@ -12,6 +12,7 @@ import (
 )
 
 var ErrDefensiveCaseNotFound = errors.New("방어 조사 사건을 찾을 수 없습니다")
+var ErrDefensiveCaseActive = errors.New("진행 중인 AI 조사를 중지한 뒤 사건을 삭제해 주세요")
 
 // A case owns its evidence. A finding is an optional immutable context snapshot,
 // never a prerequisite and never synthesized as a side effect of log analysis.
@@ -159,6 +160,37 @@ func (d *DB) GetDefensiveCase(ctx context.Context, id int64) (*DefensiveCase, er
 	out.ID = id
 	out.CreatedAt = created
 	return out, nil
+}
+
+// DeleteDefensiveCase removes the case and its owned AI runs. Locking the case
+// serializes deletion with CreateDefensiveCaseRun, and active runs must first be
+// cancelled so their worker cannot write into a deleted record.
+func (d *DB) DeleteDefensiveCase(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrDefenseInvalid
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM defensive_cases WHERE id=$1 FOR UPDATE`, id).Scan(&locked); errors.Is(err, sql.ErrNoRows) {
+		return ErrDefensiveCaseNotFound
+	} else if err != nil {
+		return err
+	}
+	var active bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM defensive_case_runs WHERE case_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return ErrDefensiveCaseActive
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM defensive_cases WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *DB) ListDefensiveCases(ctx context.Context) (*DefensiveCaseOverview, error) {

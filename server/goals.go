@@ -64,6 +64,15 @@ func (s *Server) startTaskEngine(t *Task) {
 	if ctx.Err() != nil || s.engine.IsDeleting(t.ID) {
 		return
 	}
+	// This explicit diagnostic handoff has a persisted user goal, scope
+	// constraints and one evidence-backed intent before admission. Starting the
+	// shared engine directly lets its Worker verify that intent immediately;
+	// ordinary ARTEX tasks still use the normal LLM goal-decomposition below.
+	if goal, ok := diagnosticBootstrapGoal(t); ok {
+		s.engine.emitActivity(t, db.Activity{Worker: "planner", Kind: "text", Summary: goal})
+		s.engine.Run(s.ctx, t)
+		return
+	}
 	s.engine.emitActivity(t, db.Activity{Worker: "planner", Kind: "round",
 		Summary: goalBreakdownRound0Summary})
 	goals := s.createGoals(ctx, t, func(r db.Activity) {

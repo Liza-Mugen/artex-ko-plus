@@ -1,0 +1,35 @@
+# Diagnostic execution is independent of optional vulnerable applications.
+name: aegis-diagnostics
+services:
+  offensive-runner:
+    image: aegis-diagnostic-runner:local
+    build:
+      context: .
+      dockerfile: Dockerfile.offensive-runner
+    environment:
+      ARTEX_OFFENSIVE_TOKEN_FILE: /run/offensive/token
+      OFFENSIVE_DIAGNOSTICS_DIR: /data/offensive/diagnostics
+    volumes:
+      - ./.local-runtime/offensive/token:/run/offensive/token:ro
+      - ./data/offensive/diagnostics:/data/offensive/diagnostics
+    networks: [offensive-lab, vuln-bank-lab, egress]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2g
+    cpus: 2
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    restart: unless-stopped
+networks:
+  offensive-lab:
+    external: true
+    name: aegis-offensive-lab
+  vuln-bank-lab:
+    external: true
+    name: aegis-vuln-bank-lab
+  egress: {}

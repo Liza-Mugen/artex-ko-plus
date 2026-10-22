@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ func (s *Server) registerDefensiveCases(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/defensive/cases", s.createDefensiveCase)
 	mux.HandleFunc("POST /api/defensive/cases/preview", s.previewDefensiveCase)
 	mux.HandleFunc("GET /api/defensive/cases/{id}", s.getDefensiveCase)
+	mux.HandleFunc("DELETE /api/defensive/cases/{id}", s.deleteDefensiveCase)
 	mux.HandleFunc("GET /api/defensive/cases/{id}/export", s.exportDefensiveCase)
 	s.registerDefensiveCaseRuns(mux)
 }
@@ -45,7 +47,7 @@ func defensiveCaseError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, db.ErrDefensiveCaseNotFound), errors.Is(err, db.ErrDefensiveCaseRunNotFound):
 		writeErr(w, 404, err.Error())
-	case errors.Is(err, db.ErrDefensiveCaseRunInactive):
+	case errors.Is(err, db.ErrDefensiveCaseRunInactive), errors.Is(err, db.ErrDefensiveCaseActive):
 		writeErr(w, 409, err.Error())
 	default:
 		investigationError(w, err)
@@ -277,6 +279,23 @@ func (s *Server) getDefensiveCase(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, defensiveCasePreview(out))
+}
+func (s *Server) deleteDefensiveCase(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "id")
+	if !ok || id <= 0 {
+		writeErr(w, 400, "사건 ID를 확인해 주세요")
+		return
+	}
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	if err := pg.DeleteDefensiveCase(r.Context(), id); err != nil {
+		defensiveCaseError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]string{"deleted": strconv.FormatInt(id, 10)})
 }
 func (s *Server) exportDefensiveCase(w http.ResponseWriter, r *http.Request) {
 	out, ok := s.readDefensiveCase(w, r)

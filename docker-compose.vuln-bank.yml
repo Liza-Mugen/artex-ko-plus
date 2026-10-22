@@ -1,0 +1,69 @@
+# Optional, intentionally vulnerable local training target. Never publish it
+# beyond the host loopback interface. The upstream source is pinned by the
+# setup script and kept under .local-runtime, outside the release package.
+name: aegis-vuln-bank
+
+services:
+  db:
+    image: postgres:13@sha256:4689940c683801b4ab839ab3b0a0a3555a5fe425371422310944e89eca7d8068
+    environment:
+      POSTGRES_DB: vulnerable_bank
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${VULN_BANK_DB_PASSWORD:?Run scripts/vuln-bank.sh start}
+    volumes: [vuln-bank-db:/var/lib/postgresql/data]
+    networks: [lab]
+    mem_limit: 384m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d vulnerable_bank"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./.local-runtime/vuln-bank
+      dockerfile: Dockerfile
+    environment:
+      DB_NAME: vulnerable_bank
+      DB_USER: postgres
+      DB_PASSWORD: ${VULN_BANK_DB_PASSWORD}
+      DB_HOST: db
+      DB_PORT: "5432"
+    depends_on:
+      db: {condition: service_healthy}
+    volumes: [vuln-bank-uploads:/app/static/uploads]
+    networks:
+      lab:
+        aliases: [vuln-bank]
+    mem_limit: 768m
+    cpus: 1
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  ingress:
+    image: nginx:stable-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    ports: ["127.0.0.1:15000:80"]
+    volumes:
+      - ./lab/vuln-bank/ingress.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [lab, ingress]
+    depends_on:
+      web: {condition: service_healthy}
+    mem_limit: 64m
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1/healthz]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+networks:
+  lab:
+    external: true
+    name: aegis-vuln-bank-lab
+  ingress: {}
+
+volumes:
+  vuln-bank-db:
+  vuln-bank-uploads:

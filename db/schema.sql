@@ -1397,6 +1397,16 @@ CREATE TABLE IF NOT EXISTS finding_defense_plans (
     remediation TEXT NOT NULL DEFAULT '' CHECK (char_length(remediation) <= 8000),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
+-- AI-authored scenario drafts are separate from operator plans and observations.
+CREATE TABLE IF NOT EXISTS finding_defense_scenarios (
+    id BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT NOT NULL UNIQUE REFERENCES findings(id) ON DELETE CASCADE,
+    evidence_version BIGINT NOT NULL CHECK (evidence_version >= 0),
+    source_fingerprint TEXT NOT NULL CHECK (source_fingerprint ~ '^[0-9a-f]{32}$'),
+    source_config_fingerprint TEXT NOT NULL CHECK (source_config_fingerprint ~ '^[0-9a-f]{64}$'),
+    payload JSONB NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
 CREATE TABLE IF NOT EXISTS finding_defense_validations (
     id BIGSERIAL PRIMARY KEY,
     finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,

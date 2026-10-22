@@ -40,7 +40,7 @@ import {
   investigationApi,
 } from "@/lib/investigation-api";
 import { investigationMappingForSource } from "@/lib/investigation-mapping";
-import { downloadSecurityJSON, type SecuritySource, securityApi } from "@/lib/security-api";
+import { downloadSecurityJSON, type SecuritySource, securityApi, securitySourceSourcetypes } from "@/lib/security-api";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const PAGE_SIZE = 25;
@@ -83,13 +83,62 @@ function TextList({ items }: { items: string[] | null | undefined }) {
 
 function PlanView({ plan }: { plan: InvestigationPlan }) {
   const t = useTranslations("investigation");
+  const verifiedFacts = plan.verified_facts ?? [];
+  const scenarioAssumptions = plan.scenario_assumptions ?? [];
+  const contextWarnings = plan.context_warnings ?? [];
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary">{t("curatedPlan")}</Badge>
-        <span className="text-muted-foreground text-xs">{t("planBoundary")}</span>
+        <span className="text-muted-foreground text-xs">
+          {t(plan.engine_version === "cert-investigation-v2" ? "planBoundary" : "legacyPlanBoundary")}
+        </span>
       </div>
       <p className="text-sm leading-relaxed">{plan.summary}</p>
+      {verifiedFacts.length ? (
+        <section className="space-y-2 rounded-lg border border-sky-500/30 bg-sky-500/5 p-4">
+          <h4 className="font-medium text-sm">{t("verifiedFacts")}</h4>
+          <p className="text-muted-foreground text-xs">{t("verifiedFactsHelp")}</p>
+          <ul className="space-y-2 text-sm leading-relaxed">
+            {verifiedFacts.map((fact) => (
+              <li key={`${fact.source}:${fact.text}`} className="flex flex-wrap items-baseline gap-2">
+                <Badge variant="outline" className="shrink-0 text-xs">
+                  {fact.source}
+                </Badge>
+                <span>{fact.text}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {scenarioAssumptions.length ? (
+        <section className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-4">
+          <h4 className="font-medium text-sm">{t("scenarioAssumptions")}</h4>
+          <p className="text-muted-foreground text-xs">{t("scenarioAssumptionsHelp")}</p>
+          <ul className="space-y-2 text-sm leading-relaxed">
+            {scenarioAssumptions.map((assumption) => (
+              <li key={`${assumption.source}:${assumption.text}`} className="flex flex-wrap items-baseline gap-2">
+                <Badge variant="outline" className="shrink-0 text-xs">
+                  {assumption.source}
+                </Badge>
+                <span>{assumption.text}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {contextWarnings.length ? (
+        <Alert className="border-amber-500/40 bg-amber-500/5">
+          <AlertDescription>
+            <p className="font-medium text-sm">{t("contextWarnings")}</p>
+            <TextList items={contextWarnings} />
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <div className="space-y-1">
+        <h4 className="font-medium text-sm">{t("investigationHypotheses")}</h4>
+        <p className="text-muted-foreground text-xs">{t("investigationHypothesesHelp")}</p>
+      </div>
       <div className="space-y-2">
         {(plan.hypotheses ?? []).map((hypothesis, index) => (
           <details key={hypothesis.id} className="rounded-lg border p-4" open={index === 0}>
@@ -752,314 +801,314 @@ export function FindingInvestigationPanel({
       </Card>
       {data ? (
         <Card>
-          <CardHeader>
-            <CardTitle>{t("newInvestigation")}</CardTitle>
-            <CardDescription>{t("newDescription")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <fieldset
-              disabled={!!busy || readOnly}
-              onChangeCapture={() => setPendingEvidence(true)}
-              className="space-y-5 disabled:opacity-70"
-            >
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={`${fieldId}-title`}>{t("caseTitle")}</Label>
-                  <Input
-                    id={`${fieldId}-title`}
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    maxLength={200}
-                    placeholder={t("titlePlaceholder")}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`${fieldId}-mode`}>{t("source")}</Label>
-                  <select
-                    id={`${fieldId}-mode`}
-                    className={SELECT_CLASS}
-                    value={sourceKind}
-                    onChange={(event) => changeMode(event.target.value as "file" | "splunk")}
-                  >
-                    <option value="file">{t("fileSource")}</option>
-                    <option value="splunk">{t("splunkSource")}</option>
-                  </select>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor={`${fieldId}-question`}>{t("question")}</Label>
-                <Textarea
-                  id={`${fieldId}-question`}
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  maxLength={4000}
-                  rows={2}
-                  placeholder={t("questionPlaceholder")}
-                />
-                <p className="text-muted-foreground text-xs">{t("questionHelp")}</p>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={`${fieldId}-target`}>{t("target")}</Label>
-                  <Input
-                    id={`${fieldId}-target`}
-                    list={`${fieldId}-targets`}
-                    value={target}
-                    onChange={(event) => {
-                      setTarget(event.target.value);
-                      setTargetScopeConfirmed(false);
-                      setCoverageConfirmed(false);
-                    }}
-                    placeholder={t("targetPlaceholder")}
-                  />
-                  <datalist id={`${fieldId}-targets`}>
-                    {data.targets?.map((value) => (
-                      <option key={value} value={value} />
-                    ))}
-                  </datalist>
-                  <p className="text-muted-foreground text-xs">{t("targetHelp")}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`${fieldId}-path`}>{t("pathPrefix")}</Label>
-                  <Input
-                    id={`${fieldId}-path`}
-                    value={pathPrefix}
-                    onChange={(event) => {
-                      setPathPrefix(event.target.value);
-                      setCoverageConfirmed(false);
-                    }}
-                    placeholder="/ftp"
-                  />
-                  <p className="text-muted-foreground text-xs">{t("pathHelp")}</p>
-                </div>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={`${fieldId}-start`}>{t("start")}</Label>
-                  <Input
-                    id={`${fieldId}-start`}
-                    type="datetime-local"
-                    step="1"
-                    value={start}
-                    onChange={(event) => {
-                      setStart(event.target.value);
-                      setCoverageConfirmed(false);
-                    }}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`${fieldId}-end`}>{t("end")}</Label>
-                  <Input
-                    id={`${fieldId}-end`}
-                    type="datetime-local"
-                    step="1"
-                    value={end}
-                    onChange={(event) => {
-                      setEnd(event.target.value);
-                      setCoverageConfirmed(false);
-                    }}
-                  />
-                </div>
-              </div>
-              <p className="text-muted-foreground text-xs">{t("timeHelp")}</p>
-              {sourceKind === "file" ? (
-                <div className="space-y-4 rounded-lg border p-4">
+          <details key={record?.id ?? "new"} open={!record}>
+            <summary className="cursor-pointer px-6 py-5 font-semibold text-base">
+              {t("newInvestigation")}
+              <span className="mt-2 block font-normal text-muted-foreground text-sm">{t("newDescription")}</span>
+            </summary>
+            <CardContent>
+              <fieldset
+                disabled={!!busy || readOnly}
+                onChangeCapture={() => setPendingEvidence(true)}
+                className="space-y-5 disabled:opacity-70"
+              >
+                <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor={`${fieldId}-label`}>{t("fileLabel")}</Label>
+                    <Label htmlFor={`${fieldId}-title`}>{t("caseTitle")}</Label>
                     <Input
-                      id={`${fieldId}-label`}
-                      value={fileLabel}
-                      onChange={(event) => setFileLabel(event.target.value)}
-                      maxLength={120}
-                      placeholder={t("fileLabelPlaceholder")}
+                      id={`${fieldId}-title`}
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      maxLength={200}
+                      placeholder={t("titlePlaceholder")}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor={`${fieldId}-files`}>{t("files")}</Label>
+                    <Label htmlFor={`${fieldId}-mode`}>{t("source")}</Label>
+                    <select
+                      id={`${fieldId}-mode`}
+                      className={SELECT_CLASS}
+                      value={sourceKind}
+                      onChange={(event) => changeMode(event.target.value as "file" | "splunk")}
+                    >
+                      <option value="file">{t("fileSource")}</option>
+                      <option value="splunk">{t("splunkSource")}</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`${fieldId}-question`}>{t("question")}</Label>
+                  <Textarea
+                    id={`${fieldId}-question`}
+                    value={question}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    maxLength={4000}
+                    rows={2}
+                    placeholder={t("questionPlaceholder")}
+                  />
+                  <p className="text-muted-foreground text-xs">{t("questionHelp")}</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor={`${fieldId}-target`}>{t("target")}</Label>
                     <Input
-                      id={`${fieldId}-files`}
-                      type="file"
-                      multiple
-                      accept=".json,.jsonl,.ndjson,.csv,application/json,text/csv"
+                      id={`${fieldId}-target`}
+                      list={`${fieldId}-targets`}
+                      value={target}
                       onChange={(event) => {
-                        void readFiles(event.target.files);
-                        event.target.value = "";
+                        setTarget(event.target.value);
+                        setTargetScopeConfirmed(false);
+                        setCoverageConfirmed(false);
+                      }}
+                      placeholder={t("targetPlaceholder")}
+                    />
+                    <datalist id={`${fieldId}-targets`}>
+                      {data.targets?.map((value) => (
+                        <option key={value} value={value} />
+                      ))}
+                    </datalist>
+                    <p className="text-muted-foreground text-xs">{t("targetHelp")}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor={`${fieldId}-path`}>{t("pathPrefix")}</Label>
+                    <Input
+                      id={`${fieldId}-path`}
+                      value={pathPrefix}
+                      onChange={(event) => {
+                        setPathPrefix(event.target.value);
+                        setCoverageConfirmed(false);
+                      }}
+                      placeholder="/ftp"
+                    />
+                    <p className="text-muted-foreground text-xs">{t("pathHelp")}</p>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor={`${fieldId}-start`}>{t("start")}</Label>
+                    <Input
+                      id={`${fieldId}-start`}
+                      type="datetime-local"
+                      step="1"
+                      value={start}
+                      onChange={(event) => {
+                        setStart(event.target.value);
+                        setCoverageConfirmed(false);
                       }}
                     />
-                    <p className="text-muted-foreground text-xs leading-relaxed">
-                      {t("fileLimits", { n: Math.ceil(totalBytes / 1024) })}
-                    </p>
                   </div>
-                  {files.length ? (
-                    <div className="space-y-2">
-                      {files.map((file) => (
-                        <div
-                          key={file.name}
-                          className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2"
-                        >
-                          <span className="min-w-0 truncate text-sm">
-                            {file.name}{" "}
-                            <span className="text-muted-foreground text-xs">({Math.ceil(file.bytes / 1024)} KiB)</span>
-                          </span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t("removeFile", { name: file.name })}
-                            onClick={() => {
-                              setPendingEvidence(true);
-                              setFiles((current) => current.filter((item) => item.name !== file.name));
-                              setCoverageConfirmed(false);
-                              setTargetScopeConfirmed(false);
-                            }}
-                          >
-                            <XIcon />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <label className="flex items-start gap-2 text-sm leading-relaxed">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={coverageConfirmed}
-                      onChange={(event) => setCoverageConfirmed(event.target.checked)}
-                    />
-                    <span>{t("confirmCoverage")}</span>
-                  </label>
-                  <label className="flex items-start gap-2 text-sm leading-relaxed">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={targetScopeConfirmed}
-                      onChange={(event) => setTargetScopeConfirmed(event.target.checked)}
-                    />
-                    <span>{t("confirmTarget")}</span>
-                  </label>
-                  <p className="text-muted-foreground text-xs leading-relaxed">{t("attestationHelp")}</p>
-                </div>
-              ) : (
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Label htmlFor={`${fieldId}-splunk`}>{t("splunkConnection")}</Label>
-                    <Link
-                      href="/function/purple/sources/"
-                      className="inline-flex items-center gap-1 text-xs underline underline-offset-2"
-                    >
-                      {t("manageSources")}
-                      <ArrowUpRightIcon className="size-3" />
-                    </Link>
-                  </div>
-                  {sourceError ? (
-                    <Alert variant="destructive">
-                      <AlertDescription>{sourceError}</AlertDescription>
-                    </Alert>
-                  ) : null}
-                  <select
-                    id={`${fieldId}-splunk`}
-                    className={SELECT_CLASS}
-                    value={sourceId}
-                    onChange={(event) => {
-                      const id = event.target.value;
-                      setSourceId(id);
-                      const source = sources.find((item) => item.id === id);
-                      setSourcetypes(
-                        Array.from(
-                          new Set([source?.config.audit_sourcetype, source?.config.alert_sourcetype].filter(Boolean)),
-                        ).join(", "),
-                      );
-                    }}
-                  >
-                    <option value="">{t("chooseSource")}</option>
-                    {sources.map((source) => (
-                      <option key={source.id} value={source.id} disabled={!source.enabled || !source.credential_set}>
-                        {source.name}
-                        {!source.enabled || !source.credential_set ? ` · ${t("unavailableSource")}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {!sources.length ? <p className="text-muted-foreground text-sm">{t("noSources")}</p> : null}
                   <div className="space-y-2">
-                    <Label htmlFor={`${fieldId}-sourcetypes`}>{t("sourcetypes")}</Label>
+                    <Label htmlFor={`${fieldId}-end`}>{t("end")}</Label>
                     <Input
-                      id={`${fieldId}-sourcetypes`}
-                      value={sourcetypes}
-                      onChange={(event) => setSourcetypes(event.target.value)}
+                      id={`${fieldId}-end`}
+                      type="datetime-local"
+                      step="1"
+                      value={end}
+                      onChange={(event) => {
+                        setEnd(event.target.value);
+                        setCoverageConfirmed(false);
+                      }}
                     />
-                    <p className="text-muted-foreground text-xs">{t("sourcetypesHelp")}</p>
                   </div>
-                  <p className="text-muted-foreground text-xs leading-relaxed">{t("splunkHelp")}</p>
-                  <p className="text-sm leading-relaxed">{t("splunkTargetMappingHelp", { field: mapping.target })}</p>
                 </div>
-              )}
-              <details className="rounded-lg border p-4">
-                <summary className="cursor-pointer font-medium text-sm">{t("mapping")}</summary>
-                <p className="mt-3 text-muted-foreground text-xs leading-relaxed">{t("mappingHelp")}</p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {(Object.keys(mapping) as (keyof InvestigationMapping)[]).map((key) => (
-                    <div key={key} className="space-y-1.5">
-                      <Label htmlFor={`${fieldId}-map-${key}`}>{t(`fields.${key}`)}</Label>
+                <p className="text-muted-foreground text-xs">{t("timeHelp")}</p>
+                {sourceKind === "file" ? (
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div className="space-y-2">
+                      <Label htmlFor={`${fieldId}-label`}>{t("fileLabel")}</Label>
                       <Input
-                        id={`${fieldId}-map-${key}`}
-                        value={mapping[key]}
-                        onChange={(event) => {
-                          setMapping((current) => ({ ...current, [key]: event.target.value }));
-                          setCoverageConfirmed(false);
-                          setTargetScopeConfirmed(false);
-                        }}
-                        maxLength={128}
+                        id={`${fieldId}-label`}
+                        value={fileLabel}
+                        onChange={(event) => setFileLabel(event.target.value)}
+                        maxLength={120}
+                        placeholder={t("fileLabelPlaceholder")}
                       />
                     </div>
-                  ))}
-                </div>
-                <p className="mt-3 text-muted-foreground text-xs leading-relaxed">{t("actionHelp")}</p>
-              </details>
-              {sourceKind === "splunk" ? (
-                <div className="space-y-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void previewQuery()}
-                    disabled={!selectedSource?.enabled || !selectedSource.credential_set}
-                  >
-                    {busy === "preview" ? <Spinner /> : <SearchIcon />}
-                    {t("preview")}
-                  </Button>
-                  {validPreview ? (
-                    <div className="space-y-2 rounded-lg border border-sky-500/30 p-4">
-                      <p className="font-medium text-xs">{t("previewReady")}</p>
-                      <pre className="overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 text-xs">
-                        {validPreview.query}
-                      </pre>
-                      <p className="text-muted-foreground text-xs">
-                        {t("previewHelp", { revision: validPreview.source_revision })}
+                    <div className="space-y-2">
+                      <Label htmlFor={`${fieldId}-files`}>{t("files")}</Label>
+                      <Input
+                        id={`${fieldId}-files`}
+                        type="file"
+                        multiple
+                        accept=".json,.jsonl,.ndjson,.csv,application/json,text/csv"
+                        onChange={(event) => {
+                          void readFiles(event.target.files);
+                          event.target.value = "";
+                        }}
+                      />
+                      <p className="text-muted-foreground text-xs leading-relaxed">
+                        {t("fileLimits", { n: Math.ceil(totalBytes / 1024) })}
                       </p>
                     </div>
-                  ) : (
-                    <p className="text-muted-foreground text-xs">{t("previewRequired")}</p>
-                  )}
+                    {files.length ? (
+                      <div className="space-y-2">
+                        {files.map((file) => (
+                          <div
+                            key={file.name}
+                            className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2"
+                          >
+                            <span className="min-w-0 truncate text-sm">
+                              {file.name}{" "}
+                              <span className="text-muted-foreground text-xs">
+                                ({Math.ceil(file.bytes / 1024)} KiB)
+                              </span>
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("removeFile", { name: file.name })}
+                              onClick={() => {
+                                setPendingEvidence(true);
+                                setFiles((current) => current.filter((item) => item.name !== file.name));
+                                setCoverageConfirmed(false);
+                                setTargetScopeConfirmed(false);
+                              }}
+                            >
+                              <XIcon />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <label className="flex items-start gap-2 text-sm leading-relaxed">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={coverageConfirmed}
+                        onChange={(event) => setCoverageConfirmed(event.target.checked)}
+                      />
+                      <span>{t("confirmCoverage")}</span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm leading-relaxed">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={targetScopeConfirmed}
+                        onChange={(event) => setTargetScopeConfirmed(event.target.checked)}
+                      />
+                      <span>{t("confirmTarget")}</span>
+                    </label>
+                    <p className="text-muted-foreground text-xs leading-relaxed">{t("attestationHelp")}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label htmlFor={`${fieldId}-splunk`}>{t("splunkConnection")}</Label>
+                      <Link
+                        href="/function/purple/sources/"
+                        className="inline-flex items-center gap-1 text-xs underline underline-offset-2"
+                      >
+                        {t("manageSources")}
+                        <ArrowUpRightIcon className="size-3" />
+                      </Link>
+                    </div>
+                    {sourceError ? (
+                      <Alert variant="destructive">
+                        <AlertDescription>{sourceError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    <select
+                      id={`${fieldId}-splunk`}
+                      className={SELECT_CLASS}
+                      value={sourceId}
+                      onChange={(event) => {
+                        const id = event.target.value;
+                        setSourceId(id);
+                        const source = sources.find((item) => item.id === id);
+                        setSourcetypes(securitySourceSourcetypes(source).join(", "));
+                      }}
+                    >
+                      <option value="">{t("chooseSource")}</option>
+                      {sources.map((source) => (
+                        <option key={source.id} value={source.id} disabled={!source.enabled || !source.credential_set}>
+                          {source.name}
+                          {!source.enabled || !source.credential_set ? ` · ${t("unavailableSource")}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    {!sources.length ? <p className="text-muted-foreground text-sm">{t("noSources")}</p> : null}
+                    <div className="space-y-2">
+                      <Label htmlFor={`${fieldId}-sourcetypes`}>{t("sourcetypes")}</Label>
+                      <Input
+                        id={`${fieldId}-sourcetypes`}
+                        value={sourcetypes}
+                        onChange={(event) => setSourcetypes(event.target.value)}
+                      />
+                      <p className="text-muted-foreground text-xs">{t("sourcetypesHelp")}</p>
+                    </div>
+                    <p className="text-muted-foreground text-xs leading-relaxed">{t("splunkHelp")}</p>
+                    <p className="text-sm leading-relaxed">{t("splunkTargetMappingHelp", { field: mapping.target })}</p>
+                  </div>
+                )}
+                <details className="rounded-lg border p-4">
+                  <summary className="cursor-pointer font-medium text-sm">{t("mapping")}</summary>
+                  <p className="mt-3 text-muted-foreground text-xs leading-relaxed">{t("mappingHelp")}</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {(Object.keys(mapping) as (keyof InvestigationMapping)[]).map((key) => (
+                      <div key={key} className="space-y-1.5">
+                        <Label htmlFor={`${fieldId}-map-${key}`}>{t(`fields.${key}`)}</Label>
+                        <Input
+                          id={`${fieldId}-map-${key}`}
+                          value={mapping[key]}
+                          onChange={(event) => {
+                            setMapping((current) => ({ ...current, [key]: event.target.value }));
+                            setCoverageConfirmed(false);
+                            setTargetScopeConfirmed(false);
+                          }}
+                          maxLength={128}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-muted-foreground text-xs leading-relaxed">{t("actionHelp")}</p>
+                </details>
+                {sourceKind === "splunk" ? (
+                  <div className="space-y-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void previewQuery()}
+                      disabled={!selectedSource?.enabled || !selectedSource.credential_set}
+                    >
+                      {busy === "preview" ? <Spinner /> : <SearchIcon />}
+                      {t("preview")}
+                    </Button>
+                    {validPreview ? (
+                      <div className="space-y-2 rounded-lg border border-sky-500/30 p-4">
+                        <p className="font-medium text-xs">{t("previewReady")}</p>
+                        <pre className="overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 text-xs">
+                          {validPreview.query}
+                        </pre>
+                        <p className="text-muted-foreground text-xs">
+                          {t("previewHelp", { revision: validPreview.source_revision })}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-xs">{t("previewRequired")}</p>
+                    )}
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => void create()}
+                    disabled={sourceKind === "file" ? !files.length || !fileLabel.trim() : !validPreview}
+                  >
+                    {busy === "create" ? <Spinner /> : <UploadIcon />}
+                    {t(sourceKind === "file" ? "analyzeFile" : "analyzeSplunk")}
+                  </Button>
+                  <p className="text-muted-foreground text-xs">{t("privacy")}</p>
                 </div>
+              </fieldset>
+              {busy === "create" ? (
+                <p role="status" className="mt-4 flex items-center gap-2 text-muted-foreground text-sm">
+                  <Spinner />
+                  {t(sourceKind === "splunk" ? "searching" : "analyzing")}
+                </p>
               ) : null}
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  type="button"
-                  onClick={() => void create()}
-                  disabled={sourceKind === "file" ? !files.length || !fileLabel.trim() : !validPreview}
-                >
-                  {busy === "create" ? <Spinner /> : <UploadIcon />}
-                  {t(sourceKind === "file" ? "analyzeFile" : "analyzeSplunk")}
-                </Button>
-                <p className="text-muted-foreground text-xs">{t("privacy")}</p>
-              </div>
-            </fieldset>
-            {busy === "create" ? (
-              <p role="status" className="mt-4 flex items-center gap-2 text-muted-foreground text-sm">
-                <Spinner />
-                {t(sourceKind === "splunk" ? "searching" : "analyzing")}
-              </p>
-            ) : null}
-          </CardContent>
+            </CardContent>
+          </details>
         </Card>
       ) : null}
       {record ? (
@@ -1095,42 +1144,44 @@ export function FindingInvestigationPanel({
       </div>
       {data ? (
         <Card>
-          <CardHeader>
-            <CardTitle>{t("history")}</CardTitle>
-            <CardDescription>{t("historyHelp")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {data.history_truncated ? (
-              <p className="mb-3 text-muted-foreground text-xs">{t("historyTruncated")}</p>
-            ) : null}
-            {data.investigations?.length ? (
-              <div className="space-y-2">
-                {data.investigations.map((item) => (
-                  <button
-                    type="button"
-                    key={item.id}
-                    disabled={!!busy}
-                    onClick={() => void openRecord(item.id)}
-                    className={`w-full space-y-2 rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 disabled:opacity-50 ${record?.id === item.id ? "border-sky-500/50 bg-sky-500/5" : ""}`}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-sm">{item.title || t("resultTitle")}</span>
-                      <Badge variant="outline">
-                        {t(item.source_kind === "splunk" ? "splunkSource" : "fileSource")}
-                      </Badge>
-                      {item.state === "stale" ? <Badge variant="secondary">{t("staleShort")}</Badge> : null}
-                      <span className="text-muted-foreground text-xs">
-                        {new Date(item.created_at).toLocaleString()}
-                      </span>
-                    </div>
-                    <p className="text-muted-foreground text-sm">{item.summary}</p>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-sm">{t("emptyHistory")}</p>
-            )}
-          </CardContent>
+          <details>
+            <summary className="cursor-pointer px-6 py-5 font-semibold text-base">
+              {t("history")}
+              <span className="mt-2 block font-normal text-muted-foreground text-sm">{t("historyHelp")}</span>
+            </summary>
+            <CardContent>
+              {data.history_truncated ? (
+                <p className="mb-3 text-muted-foreground text-xs">{t("historyTruncated")}</p>
+              ) : null}
+              {data.investigations?.length ? (
+                <div className="space-y-2">
+                  {data.investigations.map((item) => (
+                    <button
+                      type="button"
+                      key={item.id}
+                      disabled={!!busy}
+                      onClick={() => void openRecord(item.id)}
+                      className={`w-full space-y-2 rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 disabled:opacity-50 ${record?.id === item.id ? "border-sky-500/50 bg-sky-500/5" : ""}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-sm">{item.title || t("resultTitle")}</span>
+                        <Badge variant="outline">
+                          {t(item.source_kind === "splunk" ? "splunkSource" : "fileSource")}
+                        </Badge>
+                        {item.state === "stale" ? <Badge variant="secondary">{t("staleShort")}</Badge> : null}
+                        <span className="text-muted-foreground text-xs">
+                          {new Date(item.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground text-sm">{item.summary}</p>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("emptyHistory")}</p>
+              )}
+            </CardContent>
+          </details>
         </Card>
       ) : null}
     </div>

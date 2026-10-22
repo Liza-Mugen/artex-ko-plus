@@ -287,3 +287,113 @@ func TestPurpleSourceConflictingIdentityAndExactNumbers(t *testing.T) {
 		t.Fatal("original numeric evidence was rounded")
 	}
 }
+
+func TestPurpleSourceMultiIndexStreamsAndLegacyNormalization(t *testing.T) {
+	q := sourceQuery()
+	searches := []string{}
+	c, auth := sourceFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		search := r.Form.Get("search")
+		searches = append(searches, search)
+		index, st := "", ""
+		switch {
+		case strings.Contains(search, `index="ag_juice_shop" sourcetype="juice:audit"`):
+			index, st = "ag_juice_shop", "juice:audit"
+		case strings.Contains(search, `index="ag_vuln_bank" sourcetype="bank:alert"`):
+			index, st = "ag_vuln_bank", "bank:alert"
+		default:
+			t.Errorf("unexpected stream query: %s", search)
+		}
+		row, _ := json.Marshal(map[string]any{"_time": q.Start.Add(time.Second).Format(time.RFC3339Nano), "_cd": "1:2", "index": index, "sourcetype": st, "artex_verification_id": testCorrelation, "action": "blocked"})
+		fmt.Fprintf(w, "{\"preview\":false,\"lastrow\":true,\"result\":%s}\n", row)
+	})
+	c.Index, c.AuditSourcetype, c.AlertSourcetype = "", "", ""
+	c.Streams = []LogStream{{Index: "ag_juice_shop", Sourcetype: "juice:audit", Kind: "audit"}, {Index: "ag_vuln_bank", Sourcetype: "bank:alert", Kind: "alert"}}
+	validated, err := Validate(c)
+	if err != nil || len(validated.Streams) != 2 {
+		t.Fatalf("streams-only config rejected: %+v, %v", validated, err)
+	}
+	out, err := Fetch(t.Context(), c, auth, q)
+	if err != nil || len(searches) != 2 || !out.Complete || len(out.Events) != 2 {
+		t.Fatalf("multi-index fetch failed: evidence=%+v err=%v searches=%v", out, err, searches)
+	}
+	if out.Events[0].Index != "ag_juice_shop" || out.Events[0].Sourcetype != "juice:audit" || out.Events[1].Index != "ag_vuln_bank" || out.Events[1].Sourcetype != "bank:alert" {
+		t.Fatalf("event provenance lost: %+v", out.Events)
+	}
+	legacy := c
+	legacy.Streams, legacy.Index, legacy.AuditSourcetype, legacy.AlertSourcetype = nil, "old", "old:audit", "old:alert"
+	normalized, err := Validate(legacy)
+	if err != nil || len(normalized.Streams) != 2 || !EqualConfig(legacy, normalized) {
+		t.Fatalf("legacy normalization changed meaning: %+v, %v", normalized, err)
+	}
+	streamsOnly := normalized
+	streamsOnly.Index, streamsOnly.AuditSourcetype, streamsOnly.AlertSourcetype = "", "", ""
+	if !EqualConfig(legacy, streamsOnly) {
+		t.Fatal("moving unchanged legacy fields to streams changed connection semantics")
+	}
+	changed := normalized
+	changed.Streams = append([]LogStream(nil), normalized.Streams...)
+	changed.Streams[0].Index = "different"
+	if EqualConfig(normalized, changed) {
+		t.Fatal("effective stream index change was ignored")
+	}
+}
+
+func TestPurpleSourceStreamValidationAndAggregateBound(t *testing.T) {
+	c, _ := sourceFixture(t, func(http.ResponseWriter, *http.Request) { t.Fatal("invalid config reached network") })
+	c.Index, c.AuditSourcetype, c.AlertSourcetype = "", "", ""
+	c.Streams = []LogStream{{Index: "one", Sourcetype: "web", Kind: "audit"}, {Index: "two", Sourcetype: "waf", Kind: "alert"}}
+	for _, mutate := range []func(*Config){
+		func(cfg *Config) { cfg.Streams[0].Index = "*" },
+		func(cfg *Config) { cfg.Streams[0].Sourcetype = "web?" },
+		func(cfg *Config) { cfg.Streams[0].Kind = "other" },
+		func(cfg *Config) { cfg.Streams[1].Index, cfg.Streams[1].Sourcetype = "one", "web" },
+		func(cfg *Config) { cfg.Streams = cfg.Streams[:1] },
+	} {
+		bad := c
+		bad.Streams = append([]LogStream(nil), c.Streams...)
+		mutate(&bad)
+		if _, err := Validate(bad); err == nil {
+			t.Fatalf("invalid stream config accepted: %+v", bad.Streams)
+		}
+	}
+	q := sourceQuery()
+	out := &Evidence{Events: make([]Event, maxRows), Complete: true}
+	if err := parseStreamExport([]byte(resultLine(q.Start.Add(time.Second), testCorrelation, "blocked")), c.Streams[0], c, q, out, map[string][32]byte{}); err != nil || out.Complete || len(out.Events) != maxRows {
+		t.Fatalf("aggregate 200-row cap failed: %+v, %v", out, err)
+	}
+}
+
+func TestPurpleSourceListIndexesAndPerStreamProbe(t *testing.T) {
+	probes := 0
+	c, auth := sourceFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/services/data/indexes":
+			if r.Method != http.MethodGet || r.URL.Query().Get("count") != "128" {
+				t.Errorf("unbounded discovery: %s", r.URL)
+			}
+			fmt.Fprint(w, `{"entry":[{"name":"z_index"},{"name":"*"},{"name":"a_index"},{"name":"z_index"}]}`)
+		case "/services/search/v2/jobs/export":
+			probes++
+			if r.Method != http.MethodPost || r.ParseForm() != nil || !strings.Contains(r.Form.Get("search"), `index="security" sourcetype="app:audit" | head 1`) || r.Form.Get("earliest_time") == "" || r.Form.Get("latest_time") == "" {
+				t.Errorf("invalid stream probe: %s", r.Form.Encode())
+			}
+			fmt.Fprintln(w, `{"preview":false,"lastrow":true}`)
+		default:
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+	})
+	indexes, err := ListIndexes(t.Context(), c, auth)
+	if err != nil || len(indexes) != 2 || indexes[0] != "a_index" || indexes[1] != "z_index" {
+		t.Fatalf("discovery changed: %v %v", indexes, err)
+	}
+	probe, err := TestStream(t.Context(), c, auth, 0)
+	if err != nil || !probe.Searchable || probe.HasRecentEvents || probes != 1 {
+		t.Fatalf("completed empty search was not distinguished: %+v %v", probe, err)
+	}
+	if _, err := TestStream(t.Context(), c, auth, -1); err == nil {
+		t.Fatal("invalid stream index reached search")
+	}
+}

@@ -325,6 +325,117 @@ export function FindingInvestigationAgentPanel({
   const usage = run?.result?.usage ?? run?.usage;
   const anyActive = runs.some((item) => active(item.status));
   const partial = run && ["budget_exhausted", "cancelled", "model_error", "interrupted"].includes(run.status);
+  const showResultFirst = !standalone && !!run && !active(run.status);
+  const runControls = (
+    <div className="space-y-3">
+      <Label htmlFor={`${fieldId}-question`}>{t("question")}</Label>
+      <Textarea
+        id={`${fieldId}-question`}
+        value={question}
+        onChange={(event) => setQuestion(event.target.value)}
+        placeholder={t("questionPlaceholder")}
+        maxLength={4000}
+        rows={2}
+        disabled={!!busy || anyActive || readOnly || record.state === "stale"}
+      />
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        {standalone ? ta("defensive.aiDisclosure") : t("disclosure")}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          onClick={() => void start()}
+          disabled={!!busy || anyActive || readOnly || pendingEvidence || record.state === "stale"}
+        >
+          {busy === "start" ? <Spinner /> : <SearchIcon />}
+          {t(runs.length ? "again" : "start")}
+        </Button>
+        {run && active(run.status) ? (
+          <Button variant="outline" onClick={() => void cancel()} disabled={!!busy || readOnly}>
+            {busy === "cancel" ? <Spinner /> : <SquareIcon />}
+            {t("cancel")}
+          </Button>
+        ) : null}
+      </div>
+      <p className="text-muted-foreground text-xs">{t("budget")}</p>
+    </div>
+  );
+
+  const resultView =
+    run && (run.result || observations.length) ? (
+      <div className="space-y-4">
+        {!showResultFirst ? <h3 className="font-medium">{t("result")}</h3> : null}
+        {run.result?.summary && !showResultFirst ? (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{run.result.summary}</p>
+        ) : null}
+        <p className="text-muted-foreground text-xs leading-relaxed">{t("assessmentBoundary")}</p>
+        <div className="space-y-3">
+          {(["observed", "inferred", "insufficient_data"] as const).map((kind) => (
+            <ObservationGroup
+              key={kind}
+              kind={kind}
+              observations={observations}
+              evidence={evidence}
+              onSelect={selectEvidence}
+            />
+          ))}
+        </div>
+        {run.result?.gaps?.length ? (
+          <div className="space-y-2">
+            <h4 className="font-medium text-sm">{t("neededLogs")}</h4>
+            <StringList items={run.result.gaps} />
+          </div>
+        ) : null}
+        {run.result?.next_steps?.length ? (
+          <div className="space-y-2">
+            <h4 className="font-medium text-sm">{t("nextSteps")}</h4>
+            <StringList items={run.result.next_steps} />
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
+  const scopeView = (
+    <div className="space-y-2 rounded-lg bg-muted/40 p-4 text-sm">
+      <p className="font-medium">{t("record", { title: record.title || record.id })}</p>
+      <p className="text-muted-foreground text-xs">
+        {t("recordSavedAt", { at: new Date(record.created_at).toLocaleString() })}
+      </p>
+      <p className="break-all">
+        {t("scope")}: {record.scope.target}
+        {record.scope.path_prefix}
+      </p>
+      <p className="text-muted-foreground text-xs">
+        {new Date(record.scope.start).toLocaleString()} → {new Date(record.scope.end).toLocaleString()}
+      </p>
+      <p className="text-muted-foreground text-xs leading-relaxed">{t("scopeHelp")}</p>
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        {t(record.source_kind === "splunk" ? "splunkHelp" : "fileHelp")}
+      </p>
+    </div>
+  );
+  const historyView = (
+    <div className="space-y-2">
+      <Label htmlFor={`${fieldId}-history`}>{t("history")}</Label>
+      {runs.length ? (
+        <select
+          id={`${fieldId}-history`}
+          value={run?.id ?? ""}
+          onChange={(event) => void open(event.target.value)}
+          disabled={!!busy}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
+        >
+          {runs.map((item) => (
+            <option key={item.id} value={item.id}>
+              {new Date(item.created_at).toLocaleString()} · {t(`status.${item.status}`)}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="text-muted-foreground text-sm">{t("emptyHistory")}</p>
+      )}
+      {truncated ? <p className="text-muted-foreground text-xs">{t("historyTruncated")}</p> : null}
+    </div>
+  );
 
   return (
     <Card className="border-sky-500/40">
@@ -343,23 +454,7 @@ export function FindingInvestigationAgentPanel({
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sky-700 text-sm dark:text-sky-300">{t("flow")}</p>
-        <div className="space-y-2 rounded-lg bg-muted/40 p-4 text-sm">
-          <p className="font-medium">{t("record", { title: record.title || record.id })}</p>
-          <p className="text-muted-foreground text-xs">
-            {t("recordSavedAt", { at: new Date(record.created_at).toLocaleString() })}
-          </p>
-          <p className="break-all">
-            {t("scope")}: {record.scope.target}
-            {record.scope.path_prefix}
-          </p>
-          <p className="text-muted-foreground text-xs">
-            {new Date(record.scope.start).toLocaleString()} → {new Date(record.scope.end).toLocaleString()}
-          </p>
-          <p className="text-muted-foreground text-xs leading-relaxed">{t("scopeHelp")}</p>
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            {t(record.source_kind === "splunk" ? "splunkHelp" : "fileHelp")}
-          </p>
-        </div>
+        {!showResultFirst ? scopeView : null}
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
@@ -380,58 +475,8 @@ export function FindingInvestigationAgentPanel({
             <AlertDescription>{t("pendingEvidence")}</AlertDescription>
           </Alert>
         ) : null}
-        <div className="space-y-3">
-          <Label htmlFor={`${fieldId}-question`}>{t("question")}</Label>
-          <Textarea
-            id={`${fieldId}-question`}
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder={t("questionPlaceholder")}
-            maxLength={4000}
-            rows={2}
-            disabled={!!busy || anyActive || readOnly || record.state === "stale"}
-          />
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            {standalone ? ta("defensive.aiDisclosure") : t("disclosure")}
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => void start()}
-              disabled={!!busy || anyActive || readOnly || pendingEvidence || record.state === "stale"}
-            >
-              {busy === "start" ? <Spinner /> : <SearchIcon />}
-              {t(runs.length ? "again" : "start")}
-            </Button>
-            {run && active(run.status) ? (
-              <Button variant="outline" onClick={() => void cancel()} disabled={!!busy || readOnly}>
-                {busy === "cancel" ? <Spinner /> : <SquareIcon />}
-                {t("cancel")}
-              </Button>
-            ) : null}
-          </div>
-          <p className="text-muted-foreground text-xs">{t("budget")}</p>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${fieldId}-history`}>{t("history")}</Label>
-          {runs.length ? (
-            <select
-              id={`${fieldId}-history`}
-              value={run?.id ?? ""}
-              onChange={(event) => void open(event.target.value)}
-              disabled={!!busy}
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
-            >
-              {runs.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {new Date(item.created_at).toLocaleString()} · {t(`status.${item.status}`)}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <p className="text-muted-foreground text-sm">{t("emptyHistory")}</p>
-          )}
-          {truncated ? <p className="text-muted-foreground text-xs">{t("historyTruncated")}</p> : null}
-        </div>
+        {!showResultFirst ? runControls : null}
+        {!showResultFirst ? historyView : null}
         {run ? (
           <div className="space-y-5 border-t pt-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -447,6 +492,13 @@ export function FindingInvestigationAgentPanel({
                 {t("export")}
               </Button>
             </div>
+            {showResultFirst && (run.result || observations.length) ? (
+              <h3 className="font-medium">{t("result")}</h3>
+            ) : null}
+            {showResultFirst && run.result?.summary ? (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{run.result.summary}</p>
+            ) : null}
+            {showResultFirst ? historyView : null}
             {run.options.question ? <p className="whitespace-pre-wrap text-sm">{run.options.question}</p> : null}
             {usage ? (
               <div className="space-y-1 text-muted-foreground text-xs">
@@ -464,18 +516,28 @@ export function FindingInvestigationAgentPanel({
                 <AlertDescription>{t("partial")}</AlertDescription>
               </Alert>
             ) : null}
+            {showResultFirst ? resultView : null}
+            {showResultFirst ? scopeView : null}
+            {showResultFirst ? (
+              <details className="rounded-lg border p-4">
+                <summary className="cursor-pointer font-medium text-sm">{t("again")}</summary>
+                <div className="mt-3">{runControls}</div>
+              </details>
+            ) : null}
             {intents.length ? (
-              <div className="space-y-3">
-                <h3 className="font-medium text-sm">{t("plan")}</h3>
-                {intents.map((item) => (
-                  <div key={item.id} className="space-y-2 rounded-lg border p-4 text-sm">
-                    <p className="font-medium">{item.hypothesis}</p>
-                    <p>{item.objective}</p>
-                    <p className="text-muted-foreground">{item.reason}</p>
-                    <Citations refs={item.evidence_refs} evidence={evidence} onSelect={selectEvidence} />
-                  </div>
-                ))}
-              </div>
+              <details className="rounded-lg border p-4" open={standalone ? true : active(run.status)}>
+                <summary className="cursor-pointer font-medium text-sm">{t("plan")}</summary>
+                <div className="mt-3 space-y-3">
+                  {intents.map((item) => (
+                    <div key={item.id} className="space-y-2 rounded-lg border p-4 text-sm">
+                      <p className="font-medium">{item.hypothesis}</p>
+                      <p>{item.objective}</p>
+                      <p className="text-muted-foreground">{item.reason}</p>
+                      <Citations refs={item.evidence_refs} evidence={evidence} onSelect={selectEvidence} />
+                    </div>
+                  ))}
+                </div>
+              </details>
             ) : null}
             <details className="rounded-lg border p-4" open={active(run.status)}>
               <summary className="cursor-pointer font-medium text-sm">{t("progress")}</summary>
@@ -516,38 +578,7 @@ export function FindingInvestigationAgentPanel({
                 ))}
               </ol>
             </details>
-            {run.result || observations.length ? (
-              <div className="space-y-4">
-                <h3 className="font-medium">{t("result")}</h3>
-                {run.result?.summary ? (
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{run.result.summary}</p>
-                ) : null}
-                <p className="text-muted-foreground text-xs leading-relaxed">{t("assessmentBoundary")}</p>
-                <div className="space-y-3">
-                  {(["observed", "inferred", "insufficient_data"] as const).map((kind) => (
-                    <ObservationGroup
-                      key={kind}
-                      kind={kind}
-                      observations={observations}
-                      evidence={evidence}
-                      onSelect={selectEvidence}
-                    />
-                  ))}
-                </div>
-                {run.result?.gaps?.length ? (
-                  <div className="space-y-2">
-                    <h4 className="font-medium text-sm">{t("neededLogs")}</h4>
-                    <StringList items={run.result.gaps} />
-                  </div>
-                ) : null}
-                {run.result?.next_steps?.length ? (
-                  <div className="space-y-2">
-                    <h4 className="font-medium text-sm">{t("nextSteps")}</h4>
-                    <StringList items={run.result.next_steps} />
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {!showResultFirst ? resultView : null}
             {searches.length ? (
               <details className="rounded-lg border p-4">
                 <summary className="cursor-pointer font-medium text-sm">{t("queries")}</summary>
@@ -614,7 +645,7 @@ export function FindingInvestigationAgentPanel({
                 </p>
                 {selectedEvidence.event.known_artex ? <Badge variant="secondary">{t("knownARTEX")}</Badge> : null}
                 <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 text-xs">
-                  {selectedEvidence.event.raw || t("noRaw")}
+                  {selectedEvidence.event.raw ? selectedEvidence.event.raw : t("noRaw")}
                 </pre>
                 {selectedEvidence.query ? (
                   <div className="space-y-2">

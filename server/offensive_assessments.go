@@ -54,19 +54,24 @@ func (s *Server) registerOffensiveAssessments(mux *http.ServeMux) {
 	for _, route := range []struct{ method, path, upstream string }{
 		{"GET", "/catalog", "/catalog"},
 		{"GET", "/runs", "/runs"},
-		{"POST", "/runs", "/runs"},
 		{"GET", "/runs/{id}", "/runs/{id}"},
 		{"GET", "/runs/{id}/artifacts/{name}", "/runs/{id}/artifacts/{name}"},
 	} {
 		mux.HandleFunc(route.method+" /api/offensive"+route.path, func(w http.ResponseWriter, r *http.Request) {
-			s.proxyOffensiveAssessment(w, r, route.upstream)
+			retiredOffensiveAssessment(w, r)
 		})
 	}
-	mux.HandleFunc("POST /api/offensive/runs/{id}/review", s.reviewOffensiveAssessment)
+	mux.HandleFunc("POST /api/offensive/runs", retiredOffensiveAssessment)
+	mux.HandleFunc("POST /api/offensive/runs/{id}/review", retiredOffensiveAssessment)
 	mux.HandleFunc("GET /api/offensive/runs/{id}/candidate-review", s.getOffensiveCandidateReview)
-	mux.HandleFunc("POST /api/offensive/runs/{id}/candidate-review", s.startOffensiveCandidateReview)
+	mux.HandleFunc("POST /api/offensive/runs/{id}/candidate-review", retiredOffensiveAssessment)
 	mux.HandleFunc("POST /api/offensive/runs/{id}/candidate-review/cancel", s.cancelOffensiveCandidateReview)
-	mux.HandleFunc("POST /api/offensive/targets", s.uploadOffensiveTarget)
+	mux.HandleFunc("POST /api/offensive/targets", retiredOffensiveAssessment)
+}
+
+func retiredOffensiveAssessment(w http.ResponseWriter, _ *http.Request) {
+	offensiveHeaders(w)
+	writeJSON(w, http.StatusGone, map[string]any{"error": "추가된 Offensive 진단 실행 경로는 종료되었습니다. 기존 ARTEX 작업 화면에서 자율 작업을 시작하세요. 저장된 실행 기록은 보존됩니다", "replacement": "/function/tasks/"})
 }
 
 type offensiveConfig struct {

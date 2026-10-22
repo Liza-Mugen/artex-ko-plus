@@ -281,7 +281,7 @@ func (s *Server) collectClosedLoopLive(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var snapshot db.SecuritySource
-		if json.Unmarshal(execution.SourceSnapshot, &snapshot) != nil || snapshot.ID != source.ID || snapshot.Revision != source.Revision || snapshot.Config != source.Config || !source.Enabled {
+		if json.Unmarshal(execution.SourceSnapshot, &snapshot) != nil || snapshot.ID != source.ID || snapshot.Revision != source.Revision || !securitysource.EqualConfig(snapshot.Config, source.Config) || !source.Enabled {
 			writeLiveLoopError(w, db.ErrClosedLoopLiveConflict)
 			return
 		}

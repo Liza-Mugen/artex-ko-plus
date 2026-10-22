@@ -1,0 +1,26 @@
+# Start Splunk from this checkout without replacing the stopped lab container
+# from the other checkout. Use with docker-compose.purple-lab.yml and
+# docker-compose.purple-lab-ag.yml; only start the splunk service.
+name: aegis-splunk
+
+services:
+  splunk:
+    build:
+      context: .
+      dockerfile: lab/purple/splunk/Dockerfile.restored
+    image: aegis-splunk-restored:10.4.1
+    mem_limit: 5g
+    environment:
+      # Keep the persisted admin account aligned with the mounted secret.
+      SPLUNK_DECLARATIVE_ADMIN_PASSWORD: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$(curl -ksS -o /dev/null -w '%{http_code}' --max-time 5 https://127.0.0.1:8089/services/server/info)\" = 401"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 180s
+
+networks:
+  front:
+    external: true
+    name: artex-purple-lab-front

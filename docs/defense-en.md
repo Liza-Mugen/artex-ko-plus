@@ -1,6 +1,6 @@
 # Defending Against and Detecting Autonomous AI Attacks
 
-> This document helps **defenders** understand how an **autonomous AI penetration agent** such as ARTEX operates, so that you can build the capability to **detect and block** such attacks. It is not a guide to carrying out attacks. Use everything here only to protect systems you own or have explicit written authorization to test. Probing or attacking someone else's information and communications network without authorization is itself a crime (see the [security and misuse warning in the top-level README](../README.en.md)).
+> This document helps **defenders** understand how an **autonomous AI penetration agent** such as ARTEX operates, so that you can build the capability to **detect and block** such attacks. It is not a guide to carrying out attacks. Use everything here only to protect systems you own or have explicit written authorization to test. Probing or attacking someone else's information and communications network without authorization is itself a crime (see the security and misuse warning in the top-level README).
 >
 > 한국어판: **[자율 AI 공격 방어·탐지 가이드 (defense-ko.md)](defense-ko.md)**.
 
@@ -10,7 +10,7 @@ An autonomous AI attack tool turns a penetration test — once a manual process 
 
 ## 1. How an autonomous AI attack differs from a traditional scanner
 
-A traditional vulnerability scanner (for example a fixed-signature tool) fires a predefined checklist in order and stops. An autonomous agent like ARTEX is structured differently. As described in the [system architecture](../README.en.md#system-architecture), the following elements combine to **run multi-stage attack chains to completion without human intervention**:
+A traditional vulnerability scanner (for example a fixed-signature tool) fires a predefined checklist in order and stops. An autonomous agent like ARTEX is structured differently. As described in the system architecture, the following elements combine to **run multi-stage attack chains to completion without human intervention**:
 
 - **Role-separated multi-agents.** The work is split across `goals` (which decomposes objectives), a `planner` (the only producer of intents, which decides the next direction), multiple `worker`s (each of which executes one intent with real tools), and a `mainagent` (the human-in-the-loop point). The planner is the sole intent generator, and the workers carry those intents out in parallel.
 - **State accumulated in a dual graph.** "What exists" (the asset graph) and "how far it has been tested" (the exploration graph) are built separately and joined by anchors. As a result the attack **deepens incrementally**, revisits the same asset from new angles, and builds each next step on prior observations.
@@ -382,7 +382,7 @@ To actually file: report a security incident through [Boho Nara](https://www.boh
 ## References
 
 - Upstream project: [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) (AGPL-3.0). This document is the defensive material of its Korean-edition repository.
-- The top-level [README security and misuse warning, scope of use, and legal notice](../README.en.md).
+- The top-level README security and misuse warning, scope of use, and legal notice.
 - This edition is localized for Korea; where personal data is involved, Korean law (the Network Act and the Personal Information Protection Act) applies. Unauthorized testing is a crime in most jurisdictions regardless — always secure written authorization and an agreed scope first.
 - Standard references for general web-security hardening: [OWASP Top 10](https://owasp.org/www-project-top-ten/), [OWASP ASVS (Application Security Verification Standard)](https://owasp.org/www-project-application-security-verification-standard/), [OWASP API Security Top 10](https://api-security.owasp.org/).
 

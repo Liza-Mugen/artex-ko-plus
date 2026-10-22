@@ -5,7 +5,7 @@ package investigation
 
 import "time"
 
-const EngineVersion = "cert-investigation-v1"
+const EngineVersion = "cert-investigation-v2"
 const (
 	MaxUploadBytes = 8 << 20
 	MaxRows        = 10000
@@ -68,13 +68,23 @@ type Hypothesis struct {
 	NextSteps          []string    `json:"next_steps"`
 	References         []Reference `json:"references"`
 }
+
+// GuidanceFact describes the origin of a saved observation or a scenario
+// assumption. Neither kind of guidance establishes historical compromise.
+type GuidanceFact struct {
+	Text   string `json:"text"`
+	Source string `json:"source"`
+}
 type Plan struct {
-	EngineVersion string       `json:"engine_version"`
-	Method        string       `json:"method"`
-	Family        string       `json:"family"`
-	Summary       string       `json:"summary"`
-	Hypotheses    []Hypothesis `json:"hypotheses"`
-	Limitations   []string     `json:"limitations"`
+	EngineVersion       string         `json:"engine_version"`
+	Method              string         `json:"method"`
+	Family              string         `json:"family"`
+	Summary             string         `json:"summary"`
+	VerifiedFacts       []GuidanceFact `json:"verified_facts"`
+	ScenarioAssumptions []GuidanceFact `json:"scenario_assumptions"`
+	ContextWarnings     []string       `json:"context_warnings"`
+	Hypotheses          []Hypothesis   `json:"hypotheses"`
+	Limitations         []string       `json:"limitations"`
 }
 type InputFile struct {
 	Name    string `json:"name"`

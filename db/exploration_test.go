@@ -116,6 +116,44 @@ func TestExplorationFlow(t *testing.T) {
 	}
 }
 
+func TestHasActiveIntentByOrigin(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+
+	expID, err := d.CreateExploration("diagnostic handoff", "verify observed path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	store := d.Exploration(expID)
+	seedID, err := store.AddIntent(map[string]any{"summary": "verify first path"}, 9, nil, "diagnostic-bootstrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddIntent(map[string]any{"summary": "other work"}, 1, nil, "planner"); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want bool) {
+		t.Helper()
+		got, err := store.HasActiveIntentByOrigin("diagnostic-bootstrap")
+		if err != nil || got != want {
+			t.Fatalf("seed active = %v, err = %v; want %v", got, err, want)
+		}
+	}
+	check(true)
+	if claimed, err := store.ClaimIntent(seedID, "work#1"); err != nil || !claimed {
+		t.Fatalf("claim seed: claimed=%v err=%v", claimed, err)
+	}
+	check(true)
+	if err := store.SetNodeState(seedID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+}
+
 func TestIntentPauseResumeAndCancelCleanup(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {

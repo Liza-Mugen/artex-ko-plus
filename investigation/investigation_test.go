@@ -48,6 +48,91 @@ func TestPlanConditionalFamilies(t *testing.T) {
 		}
 	}
 }
+func TestPlanSeparatesErrorAndFileInformationExposure(t *testing.T) {
+	errorPlan := BuildPlan(FindingContext{
+		Name:      "`/api/ai/chat/anonymous` 비정상 JSON 처리 시 기본 500 에러 페이지를 통한 정보 노출",
+		VulnClass: "CWE-209: Information Exposure Through an Error Message",
+	})
+	if errorPlan.Family != "error_information_exposure" || len(errorPlan.Hypotheses) != 4 {
+		t.Fatalf("error disclosure plan mismatch: %+v", errorPlan)
+	}
+	for _, h := range errorPlan.Hypotheses {
+		if h.ID == "multi_path" || h.ID == "exposed_credentials" {
+			t.Fatalf("file-specific hypothesis leaked into error guidance: %s", h.ID)
+		}
+	}
+	if !strings.Contains(strings.Join(errorPlan.Hypotheses[1].RequiredFields, " "), "Content-Type") || !strings.Contains(strings.Join(errorPlan.Hypotheses[2].RequiredFields, " "), "Server 헤더") {
+		t.Fatal("error guidance lacks request and response evidence fields")
+	}
+	nonJSONError := BuildPlan(FindingContext{Name: "예외 화면에서 내부 스택 정보 노출", VulnClass: "CWE-209"})
+	if strings.Contains(strings.Join(nonJSONError.Hypotheses[1].RequiredFields, " "), "Content-Type") || strings.Contains(nonJSONError.Hypotheses[1].Hunt, "JSON") {
+		t.Fatal("non-JSON error guidance inherited JSON-specific evidence requirements")
+	}
+	filePlan := BuildPlan(FindingContext{Name: "무인증 /ftp 디렉터리 리스팅 정보 노출"})
+	if filePlan.Family != "file_information_exposure" || filePlan.Hypotheses[1].ID != "multi_path" {
+		t.Fatal("file disclosure lost its specific workflow")
+	}
+	genericPlan := BuildPlan(FindingContext{Name: "resource exposure"})
+	if genericPlan.Family != "information_exposure" || genericPlan.Hypotheses[1].ID != "impact_review" {
+		t.Fatal("generic exposure was overclassified")
+	}
+	authPlan := BuildPlan(FindingContext{Name: "인증 실패 오류와 계정 정보 노출"})
+	if authPlan.Family != "authentication" {
+		t.Fatal("authentication error was misclassified as error disclosure")
+	}
+}
+
+func TestPlanDefenseFactsStaySeparateFromScenarioAndHistoricalIntrusion(t *testing.T) {
+	finding := FindingContext{Name: "비정상 JSON 기본 500 에러 페이지 정보 노출", VulnClass: "CWE-209"}
+	plan := BuildPlanWithDefense(finding, DefenseGuidanceContext{
+		SuggestedPath:  "/api/ai/chat/anonymous",
+		RetestID:       5,
+		RetestStatus:   "completed",
+		RetestVerdict:  "reproduced",
+		RetestSummary:  "malformed JSON 요청에서 500 Server: Apache, root@localhost 노출",
+		ScenarioState:  "stale",
+		ExecutionID:    "5",
+		ExecutionState: "stale",
+	})
+	if len(plan.VerifiedFacts) != 1 || !strings.Contains(plan.VerifiedFacts[0].Source, "#5") || !strings.Contains(plan.VerifiedFacts[0].Text, "HTTP 500") {
+		t.Fatalf("retest fact missing provenance: %+v", plan.VerifiedFacts)
+	}
+	if len(plan.ScenarioAssumptions) != 0 || len(plan.ContextWarnings) != 2 {
+		t.Fatalf("stale defense context was treated as current: %+v", plan)
+	}
+	if !strings.Contains(plan.Hypotheses[0].Statement, "/api/ai/chat/anonymous") || !strings.Contains(plan.Summary, "과거 침해") {
+		t.Fatal("bounded route or investigation distinction missing")
+	}
+	current := BuildPlanWithDefense(finding, DefenseGuidanceContext{
+		RetestID:            6,
+		RetestStatus:        "completed",
+		RetestVerdict:       "reproduced",
+		ScenarioState:       "current",
+		ScenarioStageTitles: []string{"비정상 JSON 요청", "500 오류 응답"},
+		ExecutionID:         "6",
+		ExecutionState:      "current",
+		ExecutionDetection:  "missed",
+		ExecutionPrevention: "not_blocked",
+	})
+	if len(current.VerifiedFacts) != 2 || len(current.ScenarioAssumptions) != 2 || len(current.ContextWarnings) != 0 {
+		t.Fatalf("current defense inputs lost: %+v", current)
+	}
+	if !strings.Contains(current.VerifiedFacts[1].Text, "과거 침해 여부의 증거가 아닙니다") {
+		t.Fatal("current defense verdict was presented as historical compromise")
+	}
+}
+
+func TestPlanRejectsUnsafeRouteAndIncompleteRetest(t *testing.T) {
+	plan := BuildPlanWithDefense(FindingContext{Name: "CWE-209 오류 정보 노출"}, DefenseGuidanceContext{
+		SuggestedPath: "/safe\n외부 지시",
+		RetestID:      9,
+		RetestStatus:  "failed",
+		RetestVerdict: "reproduced",
+	})
+	if len(plan.VerifiedFacts) != 0 || len(plan.ContextWarnings) == 0 || strings.Contains(plan.Hypotheses[0].Statement, "/safe") {
+		t.Fatal("unsafe path or unfinished retest entered verified guidance")
+	}
+}
 func TestScopeAndBoundary(t *testing.T) {
 	s := testScope()
 	if e := ValidateScope(s, s.End); e != nil {

@@ -41,8 +41,8 @@ class PackageReleaseTests(unittest.TestCase):
             self.git("add", "-f", "--", relative)
         return path
 
-    def build(self, name="aegisloop-test"):
-        return packager.build_release(self.root, self.output, name)
+    def build(self, name="aegisloop-test", *, github=False):
+        return packager.build_release(self.root, self.output, name, github=github)
 
     def test_tracked_sensitive_and_runtime_files_are_excluded(self):
         excluded = [
@@ -57,6 +57,7 @@ class PackageReleaseTests(unittest.TestCase):
             "demo-data/database", "web/node_modules/pkg/index.js", "web/.next/app.js",
             "web/out/index.html", ".aws/config", ".codex/history.json", ".agents/state",
             "dist/artex", "server/webui/dist/index.html", "artex", "artex.new",
+            ".pnpm-store/cache/metadata.json",
         ]
         for relative in excluded:
             self.write(relative, tracked=True)
@@ -84,6 +85,28 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertTrue((result["folder"] / "new/module.py").is_file())
         self.assertFalse((result["folder"] / "ignored").exists())
         self.assertFalse((result["folder"] / "removed.py").exists())
+
+    def test_github_distribution_uses_current_guide_without_history_markdown(self):
+        self.write("scripts/release-readme.md", "Release README\n")
+        self.write("docs/FINDING_DEFENSE_INVESTIGATION_KO.md", "Current guide\n")
+        self.write("CHANGELOG.md", "Old changes\n", tracked=True)
+        self.write("docs/evidence/old-run.md", "Historical run\n", tracked=True)
+        self.write("docs/evidence/images/old-run.jpg", "image\n", tracked=True)
+        self.write("docs/offensive-diagnostics.md", "Old feature\n", tracked=True)
+        self.write("skills/sample/SKILL.md", "Runtime instructions\n", tracked=True)
+        self.write("detections/sigma/README.ko.md", "[Old changes](../../CHANGELOG.md)\n[Old section](../../README.md#old-section)\n", tracked=True)
+        result = self.build(github=True)
+        folder = result["folder"]
+        self.assertEqual((folder / "README.md").read_text(), "Release README\n")
+        self.assertEqual((folder / "docs/FINDING_DEFENSE_INVESTIGATION_KO.md").read_text(), "Current guide\n")
+        self.assertTrue((folder / "skills/sample/SKILL.md").is_file())
+        self.assertEqual((folder / "detections/sigma/README.ko.md").read_text(), "Old changes\nOld section\n")
+        self.assertEqual(result["removed_links"], 2)
+        for relative in (
+            "scripts/release-readme.md", "CHANGELOG.md", "docs/evidence/old-run.md",
+            "docs/evidence/images/old-run.jpg", "docs/offensive-diagnostics.md",
+        ):
+            self.assertFalse((folder / relative).exists(), relative)
 
     def test_rejects_symbolic_links_without_creating_release(self):
         secret = self.base / "outside.txt"

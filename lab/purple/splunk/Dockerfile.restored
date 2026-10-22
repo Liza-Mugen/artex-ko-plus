@@ -1,0 +1,7 @@
+# This local instance reuses initialized Splunk 10.4.1 data volumes.
+# The fresh-image first-run marker makes Splunk treat those volumes as an
+# upgrade, which triggers an unsupported CPU migration precheck under QEMU.
+FROM splunk/splunk-amd64-linux:5a009d941268-rhel9@sha256:087670d68a149f157c06a24bf0d9797dd5d34c8ca25cfbacb88ac22f94ea8c6a
+USER root
+RUN rm -f /opt/splunk/ftr
+USER ansible

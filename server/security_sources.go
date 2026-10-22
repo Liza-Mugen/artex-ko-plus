@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -19,7 +20,10 @@ func (s *Server) registerSecuritySources(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/purple/sources", s.listSecuritySources)
 	mux.HandleFunc("POST /api/purple/sources", s.saveSecuritySource)
 	mux.HandleFunc("PUT /api/purple/sources/{sourceID}", s.saveSecuritySource)
+	mux.HandleFunc("DELETE /api/purple/sources/{sourceID}", s.deleteSecuritySource)
 	mux.HandleFunc("POST /api/purple/sources/{sourceID}/test", s.testSecuritySource)
+	mux.HandleFunc("GET /api/purple/sources/{sourceID}/indexes", s.listSecuritySourceIndexes)
+	mux.HandleFunc("POST /api/purple/sources/{sourceID}/streams/{streamIndex}/test", s.testSecuritySourceStream)
 }
 func (s *Server) sourceCipher() (cipher.AEAD, error) {
 	if len(s.jwtKey) == 0 {
@@ -71,7 +75,7 @@ func sourceError(w http.ResponseWriter, e error) {
 	case errors.Is(e, securitysource.ErrInvalid), errors.Is(e, db.ErrDefenseInvalid):
 		writeErr(w, 400, e.Error())
 	case errors.Is(e, db.ErrDefenseConflict):
-		writeErr(w, 409, "연결 설정이 변경됐습니다. 새로고침 후 다시 저장해 주세요")
+		writeErr(w, 409, "연결 설정이 변경됐습니다. 새로고침 후 다시 시도해 주세요")
 	case errors.Is(e, db.ErrSecuritySourceNotFound):
 		writeErr(w, 404, e.Error())
 	default:
@@ -90,6 +94,33 @@ func (s *Server) listSecuritySources(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{"sources": rows})
+}
+func (s *Server) deleteSecuritySource(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "sourceID")
+	if !ok || id <= 0 {
+		writeErr(w, 400, "연결 ID를 확인해 주세요")
+		return
+	}
+	var in struct {
+		ExpectedRevision int64 `json:"expected_revision"`
+	}
+	if !decodePurpleRequestLimit(w, r, &in, 64<<10) {
+		return
+	}
+	if in.ExpectedRevision <= 0 {
+		writeErr(w, 400, "삭제할 연결의 버전을 확인해 주세요")
+		return
+	}
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	if err := pg.DeleteSecuritySource(r.Context(), id, in.ExpectedRevision); err != nil {
+		sourceError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]string{"deleted": strconv.FormatInt(id, 10)})
 }
 func (s *Server) saveSecuritySource(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -190,4 +221,89 @@ func (s *Server) testSecuritySource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "detail": "Splunk 관리 API 연결과 인증을 확인했습니다. 실제 로그·경보 조회는 진단 실행별로 검증합니다"})
+}
+
+// listSecuritySourceIndexes discovers names visible to the configured Splunk
+// credentials. The list is advisory: an accessible index may contain no
+// recent events and may not be relevant to the selected assessment asset.
+func (s *Server) listSecuritySourceIndexes(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "sourceID")
+	if !ok || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "연결 ID를 확인해 주세요")
+		return
+	}
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	source, err := pg.GetSecuritySource(r.Context(), id)
+	if err != nil {
+		sourceError(w, err)
+		return
+	}
+	auth, err := s.securitySourceCredentials(source)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	indexes, err := securitysource.ListIndexes(ctx, source.Config, auth)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "Splunk 인덱스 목록을 확인하지 못했습니다. 연결 권한을 확인하거나 인덱스를 직접 입력해 주세요")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"indexes": indexes})
+}
+
+// testSecuritySourceStream runs one bounded, read-only search. A successful
+// search with zero recent events must remain distinguishable from a failed
+// search or an inaccessible index.
+func (s *Server) testSecuritySourceStream(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "sourceID")
+	if !ok || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "연결 ID를 확인해 주세요")
+		return
+	}
+	streamIndex, ok := pathInt(r, "streamIndex")
+	if !ok || streamIndex < 0 {
+		writeErr(w, http.StatusBadRequest, "로그 대상 번호를 확인해 주세요")
+		return
+	}
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	source, err := pg.GetSecuritySource(r.Context(), id)
+	if err != nil {
+		sourceError(w, err)
+		return
+	}
+	if streamIndex >= int64(len(securitysource.EffectiveStreams(source.Config))) {
+		writeErr(w, http.StatusBadRequest, "로그 대상 번호를 확인해 주세요")
+		return
+	}
+	auth, err := s.securitySourceCredentials(source)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	result, err := securitysource.TestStream(ctx, source.Config, auth, int(streamIndex))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "Splunk 로그 대상 조회에 실패했습니다. 인덱스·소스타입·검색 권한을 확인해 주세요")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                result.Searchable,
+		"detail":            result.Detail,
+		"index":             result.Index,
+		"sourcetype":        result.Sourcetype,
+		"kind":              result.Kind,
+		"searchable":        result.Searchable,
+		"has_recent_events": result.HasRecentEvents,
+	})
 }

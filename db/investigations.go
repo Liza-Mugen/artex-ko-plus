@@ -64,6 +64,54 @@ const investigationContextSQL = `jsonb_build_object('name',f.name,'vuln_class',f
  FROM assets a WHERE f.asset_ids @> to_jsonb(ARRAY[a.id])),'[]'::jsonb))`
 const investigationFingerprintSQL = `md5(jsonb_build_array(f.evidence_version,` + investigationContextSQL + `)::text)`
 
+// The pre-investigation guide uses only stored defense records. These records
+// add context to the guide, but do not change the finding/asset fingerprint
+// that determines whether an earlier log investigation remains current.
+func investigationDefenseGuidanceTx(ctx context.Context, tx *sql.Tx, findingID int64) (investigation.DefenseGuidanceContext, error) {
+	var guidance investigation.DefenseGuidanceContext
+	scenario, err := defenseScenarioTx(ctx, tx, findingID)
+	if err != nil {
+		return guidance, err
+	}
+	if scenario != nil {
+		guidance.ScenarioState = scenario.State
+		guidance.ScenarioTitle = scenario.Title
+		for _, stage := range scenario.Stages {
+			if len(guidance.ScenarioStageTitles) == 5 {
+				break
+			}
+			if title := strings.TrimSpace(stage.Title); title != "" {
+				guidance.ScenarioStageTitles = append(guidance.ScenarioStageTitles, title)
+			}
+		}
+	}
+
+	// Use the latest defense-linked execution. An older successful retest must
+	// not supersede a newer failed or inconclusive defense run in the guide.
+	execution, err := scanDefenseExecution(tx.QueryRowContext(ctx, executionSelect+` WHERE e.finding_id=$1 ORDER BY e.id DESC LIMIT 1`, findingID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return guidance, nil
+	}
+	if err != nil {
+		return guidance, err
+	}
+	guidance.ExecutionID = fmt.Sprint(execution.ID)
+	guidance.ExecutionState = execution.State
+	if execution.Retest != nil {
+		guidance.RetestID = execution.Retest.ID
+		guidance.RetestStatus = execution.Retest.Status
+		guidance.RetestVerdict = execution.Retest.Verdict
+		guidance.RetestSummary = execution.Retest.Summary
+		guidance.RetestEvidence = execution.Retest.Evidence
+	}
+	err = tx.QueryRowContext(ctx, `SELECT detection,prevention FROM finding_defense_assessments WHERE execution_id=$1 ORDER BY id DESC LIMIT 1`, execution.ID).
+		Scan(&guidance.ExecutionDetection, &guidance.ExecutionPrevention)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return guidance, err
+	}
+	return guidance, nil
+}
+
 func investigationContextTx(ctx context.Context, tx *sql.Tx, findingID int64) (*InvestigationOverview, error) {
 	out := &InvestigationOverview{Targets: []string{}, Investigations: []InvestigationSummary{}, Mapping: investigation.DefaultMapping()}
 	var raw []byte
@@ -77,7 +125,12 @@ func investigationContextTx(ctx context.Context, tx *sql.Tx, findingID int64) (*
 	if err = json.Unmarshal(raw, &out.Context); err != nil {
 		return nil, err
 	}
-	out.Plan = investigation.BuildPlan(out.Context)
+	guidance, err := investigationDefenseGuidanceTx(ctx, tx, findingID)
+	if err != nil {
+		return nil, err
+	}
+	guidance.SuggestedPath = defenseFindingPath(out.Context)
+	out.Plan = investigation.BuildPlanWithDefense(out.Context, guidance)
 	seen := map[string]bool{}
 	for _, asset := range out.Context.Assets {
 		target := ""
@@ -106,6 +159,9 @@ func investigationContextTx(ctx context.Context, tx *sql.Tx, findingID int64) (*
 		}
 	}
 	sort.Strings(out.Targets)
+	if out.RecommendedPath == "" {
+		out.RecommendedPath = guidance.SuggestedPath
+	}
 	return out, nil
 }
 

@@ -177,7 +177,7 @@ func (s *Server) collectDefenseExecution(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var sourceSnapshot db.SecuritySource
-	if json.Unmarshal(execution.SourceSnapshot, &sourceSnapshot) != nil || sourceSnapshot.ID != source.ID || sourceSnapshot.Revision != source.Revision || sourceSnapshot.Config != source.Config || source.Revision != execution.SourceRevision || !source.Enabled {
+	if json.Unmarshal(execution.SourceSnapshot, &sourceSnapshot) != nil || sourceSnapshot.ID != source.ID || sourceSnapshot.Revision != source.Revision || !securitysource.EqualConfig(sourceSnapshot.Config, source.Config) || source.Revision != execution.SourceRevision || !source.Enabled {
 		writeErr(w, http.StatusConflict, "보안 로그 연결이 변경됐습니다. 현재 설정으로 새 검증 실행을 시작해 주세요")
 		return
 	}

@@ -22,7 +22,7 @@ set -- --env-file .env.local -f docker-compose.local.yml
 if [ -f .local-runtime/attack-range/bridge/compose.env ]; then
   set -- "$@" --env-file .local-runtime/attack-range/bridge/compose.env -f docker-compose.range-bridge.yml
 fi
-if [ -s .local-runtime/offensive/token ]; then
+if docker network inspect aegis-offensive-lab aegis-vuln-bank-lab >/dev/null 2>&1; then
   set -- "$@" -f docker-compose.offensive-app.yml
 fi
 docker compose "$@" config --quiet

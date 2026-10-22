@@ -61,7 +61,7 @@ func (s *ExplorationStore) UpdateConstraint(id int64, kind, text string) error {
 	}
 	res, err := s.db.Exec(`
 UPDATE task_constraints SET kind=$1, text=$2, updated_at=now()
-WHERE id=$3 AND exploration_id=$4`, kind, text, id, s.expID)
+WHERE id=$3 AND exploration_id=$4 AND origin<>'diagnostic-bootstrap'`, kind, text, id, s.expID)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ WHERE id=$3 AND exploration_id=$4`, kind, text, id, s.expID)
 // DeleteConstraint removes a constraint; scoped to this exploration. Returns an
 // error if no such constraint exists.
 func (s *ExplorationStore) DeleteConstraint(id int64) error {
-	res, err := s.db.Exec(`DELETE FROM task_constraints WHERE id=$1 AND exploration_id=$2`, id, s.expID)
+	res, err := s.db.Exec(`DELETE FROM task_constraints WHERE id=$1 AND exploration_id=$2 AND origin<>'diagnostic-bootstrap'`, id, s.expID)
 	if err != nil {
 		return err
 	}

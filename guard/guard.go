@@ -34,6 +34,7 @@ type Guard struct {
 	attrib      map[string]int // failure attribution counts (Observer / G5)
 	reg         *hook.Registry
 	interceptor *intercept.Interceptor // optional; nil disables user-configured rules
+	diagnostic  *diagnosticScope       // nil for ordinary ARTEX tasks
 }
 
 // New creates a Guard without user-configured intercept rules (used for pentest
@@ -55,6 +56,11 @@ func newGuard(ic *intercept.Interceptor) *Guard {
 func (g *Guard) Hooks() *hook.Registry { return g.reg }
 
 func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
+	// Diagnostic follow-up has a code-owned, task-scoped execution boundary.
+	// It must run before DB rules or an LLM judge, whose fallback may allow.
+	if g.DiagnosticEnabled() && !DiagnosticToolAllowed(ev.ToolName) {
+		return g.block(ev.ToolName, systemBlockMessage("진단 후속 작업에서 허용하지 않는 도구입니다"), "")
+	}
 	// Extract the shell-command surface for the audit log: Bash + the interactive-shell
 	// tools (shell_open's command, shell_send's text). Destructive/exfil gating is no
 	// longer hard-coded here — it now lives in the DB intercept rules, evaluated by
@@ -74,8 +80,25 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 		_ = json.Unmarshal(ev.Input, &in)
 		cmd = in.Text
 	}
-	g.record(ev.ToolName, "allow", "", cmd)
+	if ev.ToolName != "scoped_http_get" && ev.ToolName != "diagnostic_read_artifact" {
+		g.record(ev.ToolName, "allow", "", cmd)
+	}
 	return g.applyIntercept(ctx, ev)
+}
+
+// Only graph/evidence tools and the bounded read-only HTTP tool are available
+// in a diagnostic task. Unknown MCP, shell, browser and file tools fail closed.
+func DiagnosticToolAllowed(name string) bool {
+	switch name {
+	case "scoped_http_get", "diagnostic_read_artifact", "TodoWrite", "graph_overview", "list_findings", "list_facts", "node_detail",
+		"expand_digest", "get_worker_output", "get_worker_trace", "search_all_worker_traces",
+		"list_goals", "add_intent", "prove_goal", "goal_met", "kill_work", "steer_work",
+		"report_finding", "record_fact", "list_companies", "list_assets", "list_untested_assets",
+		"add_hint":
+		return true
+	default:
+		return false
+	}
 }
 
 // applyIntercept evaluates user-configured intercept rules against the tool call.
@@ -190,6 +213,10 @@ func (g *Guard) block(tool, reason, cmd string) hook.Result {
 func (g *Guard) record(tool, action, reason, cmd string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.recordLocked(tool, action, reason, cmd)
+}
+
+func (g *Guard) recordLocked(tool, action, reason, cmd string) {
 	g.audit = append(g.audit, AuditEntry{TS: time.Now().Unix(), Tool: tool, Action: action, Reason: reason, Command: cmd})
 	if len(g.audit) > 2000 {
 		g.audit = g.audit[len(g.audit)-2000:]

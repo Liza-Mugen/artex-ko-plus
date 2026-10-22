@@ -1,19 +1,15 @@
-# Loaded by local-start.sh after offensive-start.sh prepares the lab.
+# Optional internal lab networks for the original ARTEX Tasks workflow.
 services:
   artex:
-    environment:
-      ARTEX_OFFENSIVE_URL: http://offensive-runner:8090
-      ARTEX_OFFENSIVE_TOKEN_FILE: /run/offensive/token
-    volumes:
-      - ./.local-runtime/offensive/token:/run/offensive/token:ro
-      - ./.local-runtime/offensive/BenchmarkJava/src/main/java:/app/offensive/benchmark/src/main/java:ro
-      - ./.local-runtime/offensive/crAPI/openapi-spec:/app/offensive/crapi-schema:ro
-      - ./data/offensive/targets:/app/data/offensive/targets:ro
     networks:
       default: {}
       offensive-lab: {}
+      vuln-bank-lab: {}
 
 networks:
   offensive-lab:
     external: true
     name: aegis-offensive-lab
+  vuln-bank-lab:
+    external: true
+    name: aegis-vuln-bank-lab

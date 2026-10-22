@@ -392,7 +392,7 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 		"task_constraints": true, "activity": true, "task_asset_links": true, "findings": true,
 		"llm_records": true, "llm_usage": true, "skill_usage": true, "tool_usage": true,
 		"side_question_sessions": true, "side_question_requests": true,
-		"finding_defense_plans": true, "finding_defense_validations": true, "finding_defense_replays": true, "finding_defense_executions": true, "finding_defense_assessments": true,
+		"finding_defense_plans": true, "finding_defense_scenarios": true, "finding_defense_validations": true, "finding_defense_replays": true, "finding_defense_executions": true, "finding_defense_assessments": true,
 		"finding_investigations":     true,
 		"finding_investigation_runs": true,
 	}
@@ -410,7 +410,7 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 // verbatim, including source fingerprints: a remapped source asset should make
 // an old observation stale rather than silently rewrite what was observed.
 func restoreFindingDefenseTx(tx *sql.Tx, snapshot *TaskArchiveSnapshot) error {
-	for _, table := range []string{"finding_defense_plans", "finding_defense_validations", "finding_defense_replays", "finding_defense_executions", "finding_defense_assessments", "finding_investigations", "finding_investigation_runs"} {
+	for _, table := range []string{"finding_defense_plans", "finding_defense_scenarios", "finding_defense_validations", "finding_defense_replays", "finding_defense_executions", "finding_defense_assessments", "finding_investigations", "finding_investigation_runs"} {
 		raw := snapshot.Tables[table]
 		rows, err := decodeArchiveRows(raw)
 		if err != nil {

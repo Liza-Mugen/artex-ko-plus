@@ -454,7 +454,7 @@ library with `PYMISP_VERSION` if you mirror them internally.
 A new detection rule is stronger with a test that shows it firing. Tests should synthesize their own input
 deterministically, assert engine-version-independent properties exactly (and softer ones as floors with a
 recorded reference), and avoid any content that reads as attack guidance. See
-[`../../CONTRIBUTING.en.md`](../../CONTRIBUTING.en.md) and the rule indexes in [`../README.md`](../README.md).
+`../../CONTRIBUTING.en.md` and the rule indexes in [`../README.md`](../README.md).
 
 All eight suites run in CI (see [`../../.github/workflows/detections.yml`](../../.github/workflows/detections.yml))
 on every push or pull request that touches `detections/` — and the indicator test also runs when the upstream

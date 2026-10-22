@@ -1,0 +1,245 @@
+# Isolated, authorized Vuln-Bank practice environment. Supply the ignored
+# .local-runtime/vuln-bank-lab/compose.env with --env-file before starting.
+name: artex-vuln-bank-lab
+
+services:
+  db:
+    image: postgres:13@sha256:4689940c683801b4ab839ab3b0a0a3555a5fe425371422310944e89eca7d8068
+    command:
+      - postgres
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=stderr
+      - -c
+      - log_directory=/pglogs
+      - -c
+      - log_filename=postgresql.log
+      - -c
+      - log_truncate_on_rotation=off
+      - -c
+      - log_rotation_age=0
+      - -c
+      - log_rotation_size=0
+      - -c
+      - log_file_mode=0644
+      - -c
+      - log_statement=all
+    environment:
+      POSTGRES_DB: vulnerable_bank
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${VULN_BANK_LAB_DB_PASSWORD:?Provide .local-runtime/vuln-bank-lab/compose.env}
+    volumes:
+      - bank-db:/var/lib/postgresql/data
+      - type: bind
+        source: ./evidence-local/vuln-bank/pg-logs
+        target: /pglogs
+        bind:
+          create_host_path: false
+    networks: [backend]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 256
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d vulnerable_bank"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  web:
+    image: artex-vuln-bank-lab-web:latest
+    build:
+      context: ./.local-runtime/vuln-bank
+      dockerfile: Dockerfile
+    init: true
+    command: [/bin/sh, /app/lab-start.sh]
+    environment:
+      DB_NAME: vulnerable_bank
+      DB_USER: postgres
+      DB_PASSWORD: ${VULN_BANK_LAB_DB_PASSWORD:?Provide .local-runtime/vuln-bank-lab/compose.env}
+      DB_HOST: db
+      DB_PORT: "5432"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - bank-uploads:/app/static/uploads
+      - type: bind
+        source: ./lab/vuln-bank/lab-start.sh
+        target: /app/lab-start.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./lab/vuln-bank/lab-log-runner.py
+        target: /app/lab-log-runner.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./evidence-local/vuln-bank/app-logs
+        target: /logs
+        bind:
+          create_host_path: false
+    networks: [backend]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 256
+    healthcheck:
+      test: [CMD-SHELL, "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/healthz', timeout=5)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  waf:
+    image: owasp/modsecurity-crs:apache@sha256:497251aeb7bba3711616142af62497736f1f802db7dde2ad3956fdacbbb93879
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      BACKEND: http://web:5000
+      SERVER_NAME: vuln-bank-target
+      PORT: "8080"
+      SSL_ENGINE: "off"
+      PROXY_ERROR_OVERRIDE: "off"
+      MODSEC_RULE_ENGINE: ${LAB_WAF_MODE:-DetectionOnly}
+      MODSEC_AUDIT_ENGINE: "On"
+      MODSEC_AUDIT_LOG: /logs/modsec_audit.log
+      MODSEC_AUDIT_LOG_TYPE: Serial
+      MODSEC_AUDIT_LOG_FORMAT: Native
+      MODSEC_AUDIT_LOG_PARTS: ABFHZ
+      MODSEC_RESP_BODY_ACCESS: "Off"
+      BLOCKING_PARANOIA: "1"
+    ports: ["127.0.0.1:18791:8080"]
+    volumes:
+      - type: bind
+        source: ./lab/vuln-bank/waf/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf
+        target: /etc/modsecurity.d/owasp-crs/rules/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./evidence-local/vuln-bank/waf-logs
+        target: /logs
+        bind:
+          create_host_path: false
+    networks:
+      front:
+        aliases: [vuln-bank-target]
+      backend: {}
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    restart: unless-stopped
+
+  waf-collector:
+    image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    init: true
+    command: [python, /app/collector.py]
+    environment:
+      LOG_DIR: /logs
+      MODSEC_AUDIT_PATH: /logs/modsec_audit.log
+      TARGET: vuln-bank-target:8080
+      CONTROL_SCOPE: artex-vuln-bank-modsecurity
+      LAB_HEC_HOST: artex-vuln-bank-lab
+      SPLUNK_HEC_URL: https://purple-lab-splunk:8088/services/collector/event
+      SPLUNK_HEC_TOKEN_FILE: /run/lab-secrets/hec-token
+      SPLUNK_HEC_PIN_FILE: /run/lab-secrets/splunk-hec.sha256
+      SPLUNK_INDEX: ag_vuln_bank
+    volumes:
+      - ./lab/purple/collector:/app:ro
+      - ./evidence-local/vuln-bank/waf-logs:/logs
+      - type: bind
+        source: ./.local-runtime/vuln-bank-lab/hec-token
+        target: /run/lab-secrets/hec-token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local-runtime/purple-lab-ag/splunk-hec.sha256
+        target: /run/lab-secrets/splunk-hec.sha256
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [front]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, python, /app/collector.py, --health]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  logs-collector:
+    image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    init: true
+    command: [python, /app/collector.py]
+    environment:
+      APP_LOG_PATH: /logs/app.log
+      POSTGRES_LOG_PATH: /pglogs/postgresql.log
+      STATE_DIR: /state
+      PYTHONPATH: /lib
+      SPLUNK_HEC_URL: https://purple-lab-splunk:8088/services/collector/event
+      SPLUNK_HEC_TOKEN_FILE: /run/lab-secrets/hec-token
+      SPLUNK_HEC_PIN_FILE: /run/lab-secrets/splunk-hec.sha256
+      SPLUNK_INDEX: ag_vuln_bank
+    volumes:
+      - ./lab/vuln-bank/logs:/app:ro
+      - ./lab/purple/collector:/lib/purple/collector:ro
+      - ./evidence-local/vuln-bank/app-logs:/logs:ro
+      - ./evidence-local/vuln-bank/pg-logs:/pglogs:ro
+      - type: bind
+        source: ./evidence-local/vuln-bank/state
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local-runtime/vuln-bank-lab/hec-token
+        target: /run/lab-secrets/hec-token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local-runtime/purple-lab-ag/splunk-hec.sha256
+        target: /run/lab-secrets/splunk-hec.sha256
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [front]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, python, /app/collector.py, --health]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+networks:
+  front:
+    external: true
+    name: artex-purple-lab-front
+  backend:
+    internal: true
+
+volumes:
+  bank-db:
+    external: true
+    name: artex-vuln-bank-lab_bank-db
+  bank-uploads:
+    external: true
+    name: artex-vuln-bank-lab_bank-uploads

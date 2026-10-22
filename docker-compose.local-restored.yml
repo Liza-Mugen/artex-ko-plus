@@ -1,0 +1,21 @@
+# Runs this checkout alongside the separately started artex-local AG lab.
+# Reuses this checkout's original database volume and private runtime files.
+name: aegis-local
+
+services:
+  postgres:
+    mem_limit: 512m
+    cpus: 1
+
+  artex:
+    image: aegisloop-local:restored
+    ports: !override
+      - "127.0.0.1:28787:8787"
+      - "127.0.0.1:28788:8788"
+    mem_limit: 1g
+    cpus: 2
+
+volumes:
+  pgdata:
+    external: true
+    name: artex-local_pgdata

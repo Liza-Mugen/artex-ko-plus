@@ -26,6 +26,67 @@ func investigationFixture(t *testing.T, d *DB, id int64) FindingInvestigation {
 	}
 	return FindingInvestigation{Title: "Historical investigation", SourceKind: "file", SourceSnapshot: json.RawMessage(`{"name":"test only"}`), Scope: scope, Mapping: investigation.DefaultMapping(), Collection: collection, EvidenceVersion: overview.EvidenceVersion, SourceFingerprint: overview.SourceFingerprint}
 }
+
+func TestInvestigationOverviewUsesStoredDefenseGuidance(t *testing.T) {
+	d, id := purpleDB(t)
+	ctx := t.Context()
+	if _, err := d.ExecContext(ctx, `UPDATE findings SET name='비정상 JSON 오류 페이지 정보 노출',vulnclass='CWE-209: Information Exposure Through an Error Message',summary='POST /api/ai/chat/anonymous 요청에서 기본 500 오류 페이지 노출' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := d.GetInvestigationOverview(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.RecommendedPath != "/api/ai/chat/anonymous" {
+		t.Fatalf("finding path was not recommended: %q", initial.RecommendedPath)
+	}
+	input, err := d.GetDefenseScenarioInput(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := DefenseScenario{Title: "비정상 JSON 오류 응답 가정", Stages: []DefenseScenarioStage{{ID: "stage-1", Title: "500 응답과 서버 배너 확인"}}}
+	if _, err := d.SaveDefenseScenario(ctx, id, input, draft); err != nil {
+		t.Fatal(err)
+	}
+	withScenario, err := d.GetInvestigationOverview(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withScenario.SourceFingerprint != initial.SourceFingerprint || len(withScenario.Plan.ScenarioAssumptions) == 0 {
+		t.Fatalf("stored scenario was not used without changing investigation freshness: %+v", withScenario.Plan)
+	}
+
+	defenseInput := defenseRetestInput(t, d, id)
+	r, c, _, created, err := d.CreateFindingRetestWithDefense(ctx, id, "isolated fixture", defenseInput)
+	if err != nil || !created {
+		t.Fatalf("create defense retest: %v", err)
+	}
+	t.Cleanup(func() { _ = d.DeleteConversation(c.ID) })
+	if ok, err := d.StartFindingRetest(ctx, r.ID); err != nil || !ok {
+		t.Fatalf("start defense retest: %t %v", ok, err)
+	}
+	if err := d.RecordFindingRetestResult(ctx, c.ID, "reproduced", "비정상 JSON 요청에서 오류 페이지 재현", "해당 실행에서 HTTP 500 응답 확인"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishFindingRetest(r.ID, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+	withRetest, err := d.GetInvestigationOverview(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withRetest.SourceFingerprint != initial.SourceFingerprint || len(withRetest.Plan.VerifiedFacts) == 0 {
+		t.Fatalf("completed defense retest was not used as historical fact: %+v", withRetest.Plan)
+	}
+	if _, err := d.ExecContext(ctx, `UPDATE findings SET evidence='changed source evidence' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := d.GetInvestigationOverview(ctx, id)
+	if err != nil || len(stale.Plan.ContextWarnings) == 0 {
+		t.Fatalf("stale defense context was not identified: %+v %v", stale.Plan, err)
+	}
+}
+
 func TestInvestigationHistoryPreservesRawAndRejectsStaleFinding(t *testing.T) {
 	d, id := purpleDB(t)
 	in := investigationFixture(t, d, id)

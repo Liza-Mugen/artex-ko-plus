@@ -7,7 +7,7 @@ import Link from "next/link";
 import { ArrowUpRightIcon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-import { DefenseReplayBadge, DefenseStateBadge } from "@/components/defense-state-badge";
+import { DefenseStateBadge } from "@/components/defense-state-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -29,7 +29,6 @@ const METRICS = [
   "missed",
   "blocked",
 ] as const;
-const REPLAY_METRICS = ["replayed", "replay_passed", "replay_needs_revalidation"] as const;
 const EXECUTION_METRICS = [
   "execution_total",
   "execution_detected",
@@ -127,20 +126,6 @@ export default function PurplePage() {
                 ))}
               </CardContent>
             </Card>
-            <Card className="border-violet-500/30">
-              <CardHeader>
-                <CardTitle>{t("replay.boardTitle")}</CardTitle>
-                <CardDescription>{t("replay.scope")}</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-3">
-                {REPLAY_METRICS.map((key) => (
-                  <div key={key} className="rounded-lg bg-muted/50 p-4">
-                    <p className="text-xs text-muted-foreground">{t(`replay.metrics.${key}`)}</p>
-                    <p className="mt-2 text-2xl font-semibold tabular-nums">{data.stats[key].toLocaleString()}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
             <h3 className="text-sm font-medium">{t("manualRecord")}</h3>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7" aria-busy={loading}>
               {METRICS.map((key) => (
@@ -195,7 +180,6 @@ export default function PurplePage() {
                         <TableHead className="pl-6">{t("finding")}</TableHead>
                         <TableHead>{t("severity")}</TableHead>
                         <TableHead>{t("execution.tableTitle")}</TableHead>
-                        <TableHead>{t("replay.title")}</TableHead>
                         <TableHead>{t("execution.manualState")}</TableHead>
                         <TableHead>{t("execution.manualDetection")}</TableHead>
                         <TableHead>{t("execution.manualPrevention")}</TableHead>
@@ -244,13 +228,6 @@ export default function PurplePage() {
                               </Link>
                             ) : (
                               <span className="text-xs text-muted-foreground">{t("execution.notStarted")}</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {item.replay_verdict ? (
-                              <DefenseReplayBadge verdict={item.replay_verdict} stale={item.replay_state === "stale"} />
-                            ) : (
-                              <span className="text-xs text-muted-foreground">{t("replay.none")}</span>
                             )}
                           </TableCell>
                           <TableCell>

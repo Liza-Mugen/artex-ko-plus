@@ -2,11 +2,21 @@ import { http } from "@/lib/api";
 import type { DefensePlan } from "@/lib/purple-api";
 import type { FindingRetest } from "@/lib/types";
 
+export interface SecurityLogStream {
+  index: string;
+  sourcetype: string;
+  kind: "audit" | "alert";
+  label?: string;
+  asset?: string;
+}
+
 export interface SecuritySourceConfig {
   base_url: string;
-  index: string;
-  audit_sourcetype: string;
-  alert_sourcetype: string;
+  streams?: SecurityLogStream[];
+  // Kept for connections saved before multi-stream support.
+  index?: string;
+  audit_sourcetype?: string;
+  alert_sourcetype?: string;
   correlation_field: string;
   action_field: string;
   tls_fingerprint: string;
@@ -22,6 +32,14 @@ export interface SecuritySource {
   updated_at: string;
 }
 
+export function securitySourceSourcetypes(source?: SecuritySource): string[] {
+  const config = source?.config;
+  const values = config?.streams?.length
+    ? config.streams.map((stream) => stream.sourcetype)
+    : [config?.audit_sourcetype, config?.alert_sourcetype];
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
 export interface SecuritySourceInput {
   name: string;
   config: SecuritySourceConfig;
@@ -30,6 +48,16 @@ export interface SecuritySourceInput {
   username?: string;
   password?: string;
   token?: string;
+}
+
+export interface SecurityStreamTest {
+  ok: boolean;
+  detail: string;
+  index: string;
+  sourcetype: string;
+  kind: "audit" | "alert";
+  searchable: boolean;
+  has_recent_events: boolean;
 }
 
 export interface DefenseFileConfig {
@@ -161,6 +189,11 @@ const executionPath = (id: string) => `/exploration/findings/${encodeURIComponen
 
 export const securityApi = {
   sources: () => http<{ sources: SecuritySource[] }>("/purple/sources"),
+  indexes: (id: string) => http<{ indexes: string[] }>(`/purple/sources/${encodeURIComponent(id)}/indexes`),
+  testStream: (id: string, streamIndex: number) =>
+    http<SecurityStreamTest>(`/purple/sources/${encodeURIComponent(id)}/streams/${streamIndex}/test`, {
+      method: "POST",
+    }),
   saveSource: (id: string | null, input: SecuritySourceInput) =>
     http<SecuritySource>(id ? `/purple/sources/${encodeURIComponent(id)}` : "/purple/sources", {
       method: id ? "PUT" : "POST",
@@ -168,6 +201,11 @@ export const securityApi = {
     }),
   testSource: (id: string) =>
     http<{ ok: boolean; detail: string }>(`/purple/sources/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  deleteSource: (id: string, expectedRevision: number) =>
+    http<{ deleted: string }>(`/purple/sources/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ expected_revision: expectedRevision }),
+    }),
   executions: (id: string) => http<{ executions: DefenseExecution[] }>(executionPath(id)),
   startExecution: (id: string, input: DefenseExecutionInput) =>
     http<{ execution: DefenseExecution; retest: FindingRetest; created: boolean }>(executionPath(id), {

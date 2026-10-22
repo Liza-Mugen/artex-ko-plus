@@ -1,0 +1,17 @@
+# Use with docker-compose.local.yml to retain the AG lab database and connect
+# ARTEX to the local Purple Lab targets. ARTEX keeps the base bind mounts.
+services:
+  artex:
+    networks:
+      default: {}
+      purple-lab-front: {}
+
+networks:
+  purple-lab-front:
+    external: true
+    name: artex-purple-lab-front
+
+volumes:
+  pgdata:
+    external: true
+    name: artex-local_ag-lab-pgdata

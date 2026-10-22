@@ -3,15 +3,34 @@
 import * as React from "react";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
-import { ArrowUpRightIcon, FileSearchIcon, PlusIcon, RefreshCwIcon, SearchIcon, UploadIcon, XIcon } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  FileSearchIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  Trash2Icon,
+  UploadIcon,
+  XIcon,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { FindingInvestigationAgentPanel } from "@/components/finding-investigation-agent-panel";
 import { InvestigationEvidenceNotice, InvestigationResult } from "@/components/finding-investigation-panel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +53,7 @@ import {
   type InvestigationPreview,
 } from "@/lib/investigation-api";
 import { investigationMappingForSource } from "@/lib/investigation-mapping";
-import { downloadSecurityJSON, type SecuritySource, securityApi } from "@/lib/security-api";
+import { downloadSecurityJSON, type SecuritySource, securityApi, securitySourceSourcetypes } from "@/lib/security-api";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const SELECT_CLASS = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50";
@@ -47,6 +66,7 @@ function localTime(time: number) {
 function DefensivePageContent() {
   const t = useTranslations("investigation");
   const ta = useTranslations("Aegis");
+  const router = useRouter();
   const params = useSearchParams();
   const queryCase = params.get("case");
   const fieldId = React.useId();
@@ -74,6 +94,8 @@ function DefensivePageContent() {
   const [targetScopeConfirmed, setTargetScopeConfirmed] = React.useState(false);
   const [preview, setPreview] = React.useState<{ key: string; result: InvestigationPreview } | null>(null);
   const [record, setRecord] = React.useState<DefensiveCase | null>(null);
+  const [caseToDelete, setCaseToDelete] = React.useState<DefensiveCaseSummary | null>(null);
+  const [deletingCase, setDeletingCase] = React.useState(false);
   const [pendingEvidence, setPendingEvidence] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const [filter, setFilter] = React.useState("");
@@ -289,6 +311,36 @@ function DefensivePageContent() {
       if (seq === requestSeq.current) setError((caught as Error).message);
     } finally {
       if (seq === requestSeq.current) setBusy(null);
+    }
+  };
+  const deleteCase = async () => {
+    if (!caseToDelete || deletingCase || busy) return;
+    const id = caseToDelete.id;
+    setDeletingCase(true);
+    setError("");
+    try {
+      await defensiveApi.delete(id);
+      requestSeq.current++;
+      setCases((current) => current.filter((item) => item.id !== id));
+      setTotal((current) => (current === null ? null : Math.max(0, current - 1)));
+      if (record?.id === id) {
+        setRecord(null);
+        setPendingEvidence(false);
+      }
+      if (queryCase === id) {
+        openedQueryCase.current = id;
+        router.replace("/defensive");
+      }
+      setCaseToDelete(null);
+      toast.success(ta("defensive.deleted"));
+      await load();
+    } catch (caught) {
+      const message =
+        caught instanceof HttpError && caught.status === 409 ? ta("defensive.deleteActive") : (caught as Error).message;
+      setError(message);
+      toast.error(message);
+    } finally {
+      setDeletingCase(false);
     }
   };
   const exportRecord = async () => {
@@ -558,11 +610,7 @@ function DefensivePageContent() {
                       const id = event.target.value;
                       setSourceId(id);
                       const source = sources.find((item) => item.id === id);
-                      setSourcetypes(
-                        Array.from(
-                          new Set([source?.config.audit_sourcetype, source?.config.alert_sourcetype].filter(Boolean)),
-                        ).join(", "),
-                      );
+                      setSourcetypes(securitySourceSourcetypes(source).join(", "));
                     }}
                   >
                     <option value="">{t("chooseSource")}</option>
@@ -688,28 +736,72 @@ function DefensivePageContent() {
           ) : null}
           <div className="grid gap-3 md:grid-cols-2">
             {visibleCases.map((item) => (
-              <button
-                type="button"
+              <div
                 key={item.id}
-                disabled={!!busy}
-                onClick={() => void openRecord(item.id)}
-                className={`space-y-2 rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 disabled:opacity-50 ${record?.id === item.id ? "border-sky-500/50 bg-sky-500/5" : ""}`}
+                className={`relative rounded-lg border transition-colors hover:bg-muted/50 ${record?.id === item.id ? "border-sky-500/50 bg-sky-500/5" : ""}`}
               >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-sm">{item.title || item.id}</span>
-                  <Badge variant="outline">{item.source_kind === "splunk" ? "Splunk" : ta("defensive.file")}</Badge>
-                  <Badge variant="secondary">{ta(item.complete ? "defensive.complete" : "defensive.partial")}</Badge>
-                </div>
-                <p className="line-clamp-2 text-sm text-muted-foreground">{item.summary}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {item.scope.target}
-                  {item.scope.path_prefix} · {new Date(item.created_at).toLocaleString()}
-                </p>
-              </button>
+                <button
+                  type="button"
+                  disabled={!!busy || deletingCase}
+                  onClick={() => void openRecord(item.id)}
+                  className="block w-full space-y-2 p-4 pr-12 text-left disabled:opacity-50"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-sm">{item.title || item.id}</span>
+                    <Badge variant="outline">{item.source_kind === "splunk" ? "Splunk" : ta("defensive.file")}</Badge>
+                    <Badge variant="secondary">{ta(item.complete ? "defensive.complete" : "defensive.partial")}</Badge>
+                  </div>
+                  <p className="line-clamp-2 text-sm text-muted-foreground">{item.summary}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {item.scope.target}
+                    {item.scope.path_prefix} · {new Date(item.created_at).toLocaleString()}
+                  </p>
+                </button>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  className="absolute right-2 top-2 text-destructive hover:text-destructive"
+                  disabled={!!busy || deletingCase}
+                  aria-label={ta("defensive.deleteTarget", { name: item.title || item.id })}
+                  onClick={() => setCaseToDelete(item)}
+                >
+                  <Trash2Icon />
+                </Button>
+              </div>
             ))}
           </div>
         </CardContent>
       </Card>
+      <AlertDialog
+        open={!!caseToDelete}
+        onOpenChange={(open) => {
+          if (!open && !deletingCase) setCaseToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {ta("defensive.deleteTitle", { name: caseToDelete?.title || caseToDelete?.id || "" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{ta("defensive.deleteDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingCase}>{ta("defensive.deleteCancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deletingCase}
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteCase();
+              }}
+            >
+              {deletingCase ? <Spinner /> : <Trash2Icon />}
+              {ta(deletingCase ? "defensive.deleting" : "defensive.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {record ? (
         <div ref={resultRef} className="scroll-mt-24 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-4">

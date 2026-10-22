@@ -63,7 +63,9 @@ func offensiveCheckpointFixture(t *testing.T) (*Server, func(string, string, str
 		pg.Close()
 	})
 	token, _ := signJWT(s.jwtKey)
-	handler := s.Handler()
+	// Exercise the retained checkpoint engine directly. Its public start route
+	// is retired and is independently covered by diagnostic route tests.
+	handler := offensiveLegacyHandler(s)
 	return s, func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer "+token)

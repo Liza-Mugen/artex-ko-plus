@@ -150,7 +150,13 @@ func BuildClosedLoopRuleSearch(c Config, q Query, scope investigation.Scope, map
 	if err = validateClosedLoopRules(mapping, baseline, candidate); err != nil {
 		return "", err
 	}
-	search, err := BuildInvestigationSearch(c, scope, mapping, []string{c.AuditSourcetype})
+	auditStreams := make([]LogStream, 0, len(c.Streams))
+	for _, stream := range c.Streams {
+		if stream.Kind == "audit" {
+			auditStreams = append(auditStreams, stream)
+		}
+	}
+	search, err := buildInvestigationSearchForStreams(scope, mapping, auditStreams)
 	if err != nil {
 		return "", err
 	}
@@ -295,13 +301,20 @@ func FetchClosedLoopRules(ctx context.Context, c Config, auth Credentials, q Que
 		out.warn("설정된 대상·경로·시각 범위 밖의 이벤트가 반환됐습니다")
 	}
 	seen := map[string]string{}
+	auditPairs := make(map[string]bool)
+	for _, stream := range c.Streams {
+		if stream.Kind == "audit" {
+			auditPairs[stream.Index+"\x00"+stream.Sourcetype] = true
+		}
+	}
 	for _, event := range collection.Events {
 		if event.VerificationID != q.CorrelationID {
 			out.warn("설정된 실행 UUID와 다른 이벤트가 반환됐습니다")
 			continue
 		}
 		fields, fallback, err := closedLoopObjects([]byte(event.Raw))
-		if err != nil || closedLoopScalar(fields["index"]) != c.Index || closedLoopScalar(fields["sourcetype"]) != c.AuditSourcetype {
+		index, sourcetype := closedLoopScalar(fields["index"]), closedLoopScalar(fields["sourcetype"])
+		if err != nil || !auditPairs[index+"\x00"+sourcetype] {
 			out.warn("감사 로그 출처 또는 원본 이벤트 형식을 확인하지 못했습니다")
 			continue
 		}
@@ -313,7 +326,7 @@ func FetchClosedLoopRules(ctx context.Context, c Config, auth Credentials, q Que
 			out.warn("Splunk 규칙 결과와 원본 필드의 조건 판정이 일치하지 않습니다")
 			base, cand = "unknown", "unknown"
 		}
-		id := closedLoopEventID(fields, fallback, mapping, c.Index, []byte(event.Raw))
+		id := closedLoopEventID(fields, fallback, mapping, index, []byte(event.Raw))
 		hash := closedloop.Hash([]byte(event.Raw))
 		if previous, exists := seen[id]; exists {
 			if previous != hash {

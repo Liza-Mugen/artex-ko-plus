@@ -46,8 +46,13 @@ func TestPurpleLifecycleSnapshotsAndCounts(t *testing.T) {
 	d, id := purpleDB(t)
 	ctx := t.Context()
 	initial, err := d.GetFindingDefense(ctx, id)
-	if err != nil || initial.State != "unplanned" || initial.Plan != nil || len(initial.Validations) != 0 {
+	if err != nil || initial.State != "unplanned" || initial.Plan != nil || len(initial.Validations) != 0 || initial.SuggestedHypothesis == "" {
 		t.Fatalf("initial: %+v %v", initial, err)
+	}
+	// Opening the tab twice must not persist a plan or advance its revision.
+	again, err := d.GetFindingDefense(ctx, id)
+	if err != nil || again.Plan != nil || again.SuggestedHypothesis != initial.SuggestedHypothesis {
+		t.Fatalf("read created or changed plan: %+v %v", again, err)
 	}
 	baseline, err := d.GetPurpleOverview(ctx, 1, 20)
 	if err != nil {

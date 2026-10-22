@@ -27,34 +27,88 @@ func BuildInvestigationSearch(c Config, scope investigation.Scope, mapping inves
 	if err != nil {
 		return "", err
 	}
-	if err = investigation.ValidateScope(scope, time.Now().UTC()); err != nil {
+	selected, err := investigationStreams(c, sourcetypes)
+	if err != nil {
 		return "", err
 	}
-	if err = investigation.ValidateMapping(mapping); err != nil {
+	return buildInvestigationSearchForStreams(scope, mapping, selected)
+}
+
+// An explicit sourcetype selects its configured stream pairs. Legacy custom
+// sourcetype hunting remains supported, but only inside configured indexes.
+func investigationStreams(c Config, sourcetypes []string) ([]LogStream, error) {
+	if len(sourcetypes) == 0 {
+		return EffectiveStreams(c), nil
+	}
+	if len(sourcetypes) > 8 {
+		return nil, fmt.Errorf("%w: 조사 sourcetype은 최대 8개까지 선택할 수 있습니다", ErrInvalid)
+	}
+	selected := make([]LogStream, 0, len(sourcetypes))
+	seen := make(map[string]bool)
+	for _, st := range sourcetypes {
+		if !sourceName.MatchString(st) || seen[st] {
+			return nil, fmt.Errorf("%w: 중복 없는 sourcetype 이름을 입력해 주세요", ErrInvalid)
+		}
+		seen[st] = true
+		matched := false
+		for _, stream := range c.Streams {
+			if stream.Sourcetype == st {
+				selected = append(selected, stream)
+				matched = true
+			}
+		}
+		if matched {
+			continue
+		}
+		indexSeen := map[string]bool{}
+		for _, stream := range c.Streams {
+			if !indexSeen[stream.Index] {
+				selected = append(selected, LogStream{Index: stream.Index, Sourcetype: st})
+				indexSeen[stream.Index] = true
+			}
+		}
+	}
+	return selected, nil
+}
+
+// Every OR arm names both an index and a sourcetype. Keeping the pair inside
+// parentheses prevents SPL's operator precedence from broadening the search.
+func buildInvestigationSearchForStreams(scope investigation.Scope, mapping investigation.Mapping, streams []LogStream) (string, error) {
+	if len(streams) == 0 || len(streams) > maxLogStreams*8 {
+		return "", fmt.Errorf("%w: 조사 로그 스트림 수를 확인해 주세요", ErrInvalid)
+	}
+	if err := investigation.ValidateScope(scope, time.Now().UTC()); err != nil {
+		return "", err
+	}
+	if err := investigation.ValidateMapping(mapping); err != nil {
 		return "", err
 	}
 	effectiveMapping := mapping
 	effectiveMapping.Timestamp = "_time"
-	if err = investigation.ValidateMapping(effectiveMapping); err != nil {
+	if err := investigation.ValidateMapping(effectiveMapping); err != nil {
 		return "", err
 	}
 	if mapping.Target == "" || (scope.PathPrefix != "" && mapping.Path == "") {
 		return "", fmt.Errorf("%w: Splunk 대상 필드와 경로 범위에 필요한 경로 필드를 매핑해 주세요", ErrInvalid)
 	}
-	if len(sourcetypes) == 0 {
-		sourcetypes = []string{c.AuditSourcetype, c.AlertSourcetype}
-	}
-	if len(sourcetypes) > 8 {
-		return "", fmt.Errorf("%w: 조사 sourcetype은 최대 8개까지 선택할 수 있습니다", ErrInvalid)
-	}
-	parts := make([]string, 0, len(sourcetypes))
-	seen := make(map[string]bool)
-	for _, st := range sourcetypes {
-		if !sourceName.MatchString(st) || seen[st] {
-			return "", fmt.Errorf("%w: 중복 없는 sourcetype 이름을 입력해 주세요", ErrInvalid)
+	parts := make([]string, 0, len(streams))
+	singleIndex := streams[0].Index
+	for _, stream := range streams {
+		if !sourceName.MatchString(stream.Index) || !sourceName.MatchString(stream.Sourcetype) {
+			return "", fmt.Errorf("%w: 조사 로그 스트림 이름을 확인해 주세요", ErrInvalid)
 		}
-		seen[st] = true
-		parts = append(parts, "sourcetype="+investigationLiteral(st))
+		if stream.Index != singleIndex {
+			singleIndex = ""
+		}
+		parts = append(parts, "(index="+investigationLiteral(stream.Index)+" sourcetype="+investigationLiteral(stream.Sourcetype)+")")
+	}
+	sourceClause := "(" + strings.Join(parts, " OR ") + ")"
+	if singleIndex != "" {
+		parts = parts[:0]
+		for _, stream := range streams {
+			parts = append(parts, "sourcetype="+investigationLiteral(stream.Sourcetype))
+		}
+		sourceClause = "index=" + investigationLiteral(singleIndex) + " (" + strings.Join(parts, " OR ") + ")"
 	}
 
 	// A hostname scope includes all its ports; an explicitly supplied port is
@@ -100,7 +154,7 @@ func BuildInvestigationSearch(c Config, scope investigation.Scope, mapping inves
 		mapping.Target, mapping.Path, mapping.SourceIP, mapping.User, mapping.Session,
 		mapping.Action, mapping.Status, mapping.Bytes, mapping.VerificationID,
 		mapping.EventKind, mapping.ResponseComplete, "_time", "sourcetype", "source", "host", "index")
-	search := "search index=" + investigationLiteral(c.Index) + " (" + strings.Join(parts, " OR ") + ") | spath" + uniqueFields + " | where match(trim(tostring('" + mapping.Target + "')), " + investigationLiteral(targetPattern) + ")"
+	search := "search " + sourceClause + " | spath" + uniqueFields + " | where match(trim(tostring('" + mapping.Target + "')), " + investigationLiteral(targetPattern) + ")"
 	if scope.PathPrefix != "" && scope.PathPrefix != "/" {
 		prefix := strings.TrimRight(scope.PathPrefix, "/")
 		// Decode once, remove URL query/fragment, and compare at a path boundary.

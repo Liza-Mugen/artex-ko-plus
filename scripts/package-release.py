@@ -20,9 +20,17 @@ import zipfile
 
 
 MANIFEST = "SOURCE_MANIFEST.sha256"
+GITHUB_README_TEMPLATE = "scripts/release-readme.md"
+GITHUB_GUIDE = "docs/FINDING_DEFENSE_INVESTIGATION_KO.md"
+GITHUB_MARKDOWN = frozenset({
+    "README.md", GITHUB_GUIDE, "docs/defense-ko.md", "docs/defense-en.md",
+})
+GITHUB_MARKDOWN_PREFIXES = ("skills/", "detections/")
+GITHUB_EXCLUDED_PATH_PREFIXES = ("docs/evidence/", "docs/legacy-assessments/", "screenshots/")
+MARKDOWN_FILE_LINK = re.compile(r"(?P<image>!?)\[(?P<label>[^\]]+)\]\((?P<target>[^)\s]+)\)")
 EXCLUDED_DIRS = frozenset({
     ".git", ".aws", ".codex", ".agents", ".claude", ".local-runtime",
-    ".playwright-mcp", ".playwright-cli", ".idea", ".vscode", ".next",
+    ".playwright-mcp", ".playwright-cli", ".pnpm-store", ".idea", ".vscode", ".next",
     "__pycache__", "node_modules", "release-artifacts", "evidence-local",
     "work", "test-results", "scan-output", "demo-data", "transcripts",
 })
@@ -58,7 +66,7 @@ def git(root, *args):
     return result.stdout
 
 
-def exclusion_reason(relative):
+def exclusion_reason(relative, *, github=False):
     """Return a public-release exclusion reason, or None for source files."""
     parts = PurePosixPath(relative).parts
     lowered = tuple(part.lower() for part in parts)
@@ -79,6 +87,14 @@ def exclusion_reason(relative):
         return "local executable or upgrade output"
     if name == MANIFEST.lower():
         return "release manifest is regenerated"
+    if relative == GITHUB_README_TEMPLATE:
+        return "release README template"
+    if github:
+        if relative.startswith(GITHUB_EXCLUDED_PATH_PREFIXES):
+            return "development evidence or historical material"
+        if relative.endswith(".md") and relative not in GITHUB_MARKDOWN \
+                and not relative.startswith(GITHUB_MARKDOWN_PREFIXES):
+            return "not needed in the GitHub distribution"
     return None
 
 
@@ -108,18 +124,19 @@ def checked_source(root, relative):
     return current
 
 
-def inventory(root):
+def inventory(root, *, github=False):
     candidates = git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     included, excluded = [], []
     for relative in sorted({os.fsdecode(item) for item in candidates.split(b"\0") if item}):
-        source = checked_source(root, relative)
-        reason = exclusion_reason(relative)
-        if source is None:
-            excluded.append((relative, "deleted from working tree"))
-        elif reason:
+        reason = exclusion_reason(relative, github=github)
+        if reason:
             excluded.append((relative, reason))
         else:
-            included.append(relative)
+            source = checked_source(root, relative)
+            if source is None:
+                excluded.append((relative, "deleted from working tree"))
+            else:
+                included.append(relative)
     if not included:
         raise ReleaseError("No public source files remain after exclusions.")
     return included, excluded
@@ -154,28 +171,77 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def build_release(root, output, name):
+def remove_excluded_markdown_links(root, source_folder, relative):
+    """Keep release docs readable when a link points to an omitted local file."""
+    path = source_folder / relative
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    rewritten, fenced, removed = [], False, 0
+    for line in lines:
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        if fenced:
+            rewritten.append(line)
+            continue
+
+        def replace(match):
+            nonlocal removed
+            target = match.group("target")
+            if target.startswith(("http://", "https://", "mailto:", "tel:", "data:", "#")):
+                return match.group(0)
+            file_part = target.split("#", 1)[0].split("?", 1)[0]
+            resolved = (root / Path(relative).parent / file_part).resolve()
+            try:
+                target_relative = resolved.relative_to(root)
+            except ValueError as error:
+                raise ReleaseError(f"Markdown link escapes repository: {relative}: {target}") from error
+            if target_relative == Path("README.md") and "#" in target:
+                # The GitHub README replaces the development README and its headings.
+                removed += 1
+                return match.group("label")
+            if (source_folder / target_relative).exists():
+                return match.group(0)
+            if not resolved.exists():
+                raise ReleaseError(f"Broken Markdown link in source: {relative}: {target}")
+            removed += 1
+            return match.group("label")
+
+        rewritten.append(MARKDOWN_FILE_LINK.sub(replace, line))
+    if removed:
+        path.write_text("".join(rewritten), encoding="utf-8")
+    return removed
+
+
+def build_release(root, output, name, *, github=False):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", name):
         raise ReleaseError("Name must contain 1–100 ASCII letters, digits, dots, underscores, or hyphens.")
     root = Path(root).resolve()
     output = Path(output).absolute()
+    if github:
+        for required in ("README.md", GITHUB_README_TEMPLATE, GITHUB_GUIDE):
+            if checked_source(root, required) is None:
+                raise ReleaseError(f"Required GitHub distribution file is missing: {required}")
     release = output / name
     archive = output / f"{name}.zip"
     checksum = output / f"{name}.zip.sha256"
     for path in (release, archive, checksum):
         if os.path.lexists(path):
             raise ReleaseError(f"Output already exists; choose a new name: {path}")
-    included, excluded = inventory(root)
+    included, excluded = inventory(root, github=github)
     output.mkdir(parents=True, exist_ok=True)
     published = []
     with tempfile.TemporaryDirectory(prefix=f".{name}-", dir=output) as temporary:
         staging = Path(temporary)
         source_folder = staging / name
         source_folder.mkdir()
-        records = []
         for relative in included:
-            digest = copy_source(root, relative, source_folder / relative)
-            records.append(f"{digest}  {relative}\n")
+            source = GITHUB_README_TEMPLATE if github and relative == "README.md" else relative
+            copy_source(root, source, source_folder / relative)
+        removed_links = 0
+        if github:
+            for relative in included:
+                if relative.endswith(".md"):
+                    removed_links += remove_excluded_markdown_links(root, source_folder, relative)
+        records = [f"{sha256(source_folder / relative)}  {relative}\n" for relative in included]
         # The manifest covers every copied source file, excluding itself.
         (source_folder / MANIFEST).write_text("".join(records), encoding="utf-8")
         staged_zip = staging / archive.name
@@ -204,7 +270,7 @@ def build_release(root, output, name):
             raise
     return {
         "folder": release, "archive": archive, "checksum": checksum,
-        "included": included, "excluded": excluded,
+        "included": included, "excluded": excluded, "removed_links": removed_links,
     }
 
 
@@ -217,21 +283,24 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, default=Path.cwd() / "release-artifacts",
                         help="output directory (default: ./release-artifacts)")
     parser.add_argument("--dry-run", action="store_true", help="list included/excluded paths without writing files")
+    parser.add_argument("--github", action="store_true", help="package only user-facing Markdown and use the GitHub README")
     args = parser.parse_args(argv)
     try:
         root = Path(os.fsdecode(git(Path.cwd(), "rev-parse", "--show-toplevel")).strip()).resolve()
         if args.dry_run:
-            included, excluded = inventory(root)
+            included, excluded = inventory(root, github=args.github)
             for relative in included:
                 print(f"INCLUDE {relative}")
             for relative, reason in excluded:
                 print(f"EXCLUDE {relative}: {reason}")
             print(f"Files: {len(included)} included, {len(excluded)} excluded")
         else:
-            result = build_release(root, args.output, args.name)
+            result = build_release(root, args.output, args.name, github=args.github)
             print(f"Files: {len(result['included'])} included, {len(result['excluded'])} excluded")
             for key in ("folder", "archive", "checksum"):
                 print(f"{key.capitalize()}: {result[key]}")
+            if args.github:
+                print(f"Links to omitted local files converted to text: {result['removed_links']}")
             print("Review and secret-scan the release folder before publishing.")
         return 0
     except (ReleaseError, OSError, ValueError) as error:

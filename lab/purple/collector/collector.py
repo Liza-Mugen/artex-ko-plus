@@ -29,11 +29,48 @@ MAX_BATCH = 100
 PART = re.compile(rb"^--([A-Za-z0-9]+)-([A-Z])--\r?\n", re.MULTILINE)
 START = re.compile(rb"^--([A-Za-z0-9]+)-A--\r?\n", re.MULTILINE)
 RULE_META = re.compile(r'(?<!\\)\[file "(?:\\.|[^"\\])*"\]\s+\[line "\d+"\]\s+\[id "(\d+)"\]')
-SCOPE = "artex-purple-lab-modsecurity"
+SCOPE = os.environ.get("CONTROL_SCOPE", "artex-purple-lab-modsecurity")
+ID_NAMESPACES = {
+    "artex-purple-lab-modsecurity": "artex-purple-lab",
+    "artex-vuln-bank-modsecurity": "artex-vuln-bank",
+}
+if SCOPE not in ID_NAMESPACES:
+    raise ValueError("unsupported local collector scope")
 
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def source_checkpoint(stream, offset):
+    """Bind a cursor to file content and inode, not Docker's mount device ID.
+
+    Docker Desktop can assign a new st_dev to the same bind-mounted file after
+    its VM restarts. The inode and two bounded content anchors still protect
+    against replacement or in-place rewriting around the saved cursor.
+    """
+    position = stream.tell()
+    try:
+        length = min(offset, 4096)
+        stream.seek(0)
+        prefix = hashlib.sha256(stream.read(length)).hexdigest()
+        stream.seek(offset - length)
+        tail = hashlib.sha256(stream.read(length)).hexdigest()
+    finally:
+        stream.seek(position)
+    return f"v2:{os.fstat(stream.fileno()).st_ino}:{offset}:{prefix}:{tail}"
+
+
+def matches_source_checkpoint(stream, saved, offset):
+    if not saved:
+        return True
+    if saved.startswith("v2:"):
+        return hmac.compare_digest(saved, source_checkpoint(stream, offset))
+    # Legacy state stored st_dev:st_ino. The device ID is unstable on Docker
+    # Desktop bind mounts; accepting the same inode is no weaker than that
+    # legacy check when the host file is unchanged.
+    parts = saved.split(":")
+    return len(parts) == 2 and all(part.isdecimal() for part in parts) and int(parts[1]) == os.fstat(stream.fileno()).st_ino
 
 
 class EvidenceError(ValueError):
@@ -179,7 +216,7 @@ def normalize_native(raw, default_target="purple-lab-target:8080"):
                     rule_ids.append(rule_id)
     digest = hashlib.sha256(raw).hexdigest()
     return {
-        "id": str(uuid5(NAMESPACE_URL, "artex-purple-lab-native:" + digest)),
+        "id": str(uuid5(NAMESPACE_URL, ID_NAMESPACES[SCOPE] + "-native:" + digest)),
         "timestamp": timestamp.isoformat().replace("+00:00", "Z"), "timestamp_basis": timestamp_basis,
         "audit_header_timestamp": header_timestamp.isoformat().replace("+00:00", "Z"),
         "request_uid": header.group(2), "source_ip": header.group(3),
@@ -291,7 +328,8 @@ class PinnedHEC:
                 "time": datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")).timestamp(),
                 # Keep indexed metadata and raw event source identical so
                 # explicit JSON extraction cannot create conflicting values.
-                "host": "artex-purple-lab", "source": event["source"],
+                "host": os.environ.get("LAB_HEC_HOST", "artex-purple-lab"),
+                "source": event["source"],
                 "sourcetype": "artex:lab:audit", "index": self.index, "event": event,
             }, ensure_ascii=False, separators=(",", ":")) for event in events).encode()
             connection.request("POST", self.path, body=body, headers={
@@ -346,22 +384,22 @@ class Collector:
             return
         with self.source.open("rb") as stream:
             stat = os.fstat(stream.fileno())
-            identity = f"{stat.st_dev}:{stat.st_ino}"
             saved_identity = self._state("source_identity")
             offset = int(self._state("offset", "0"))
-            if saved_identity and saved_identity != identity:
-                raise EvidenceError("audit source rotated; explicit new collection is required")
             if stat.st_size < offset:
                 raise EvidenceError("audit source shrank; collection coverage is incomplete")
+            if not matches_source_checkpoint(stream, saved_identity, offset):
+                raise EvidenceError("audit source rotated; explicit new collection is required")
             stream.seek(offset)
             data = stream.read(MAX_TRANSACTION_BYTES * 2)
-        for raw, end_offset in native_frames(data):
-            event = normalize_native(raw, self.target)
-            with self.db:
-                self.db.execute("INSERT OR IGNORE INTO events(id,payload) VALUES (?,?)", (event["id"], json.dumps(event, ensure_ascii=False)))
-                self._save_state("source_identity", identity)
-                self._save_state("offset", offset + end_offset)
-            self.last_read_at = utc_now()
+            for raw, end_offset in native_frames(data):
+                event = normalize_native(raw, self.target)
+                checkpoint = source_checkpoint(stream, offset + end_offset)
+                with self.db:
+                    self.db.execute("INSERT OR IGNORE INTO events(id,payload) VALUES (?,?)", (event["id"], json.dumps(event, ensure_ascii=False)))
+                    self._save_state("source_identity", checkpoint)
+                    self._save_state("offset", offset + end_offset)
+                self.last_read_at = utc_now()
 
     def export(self):
         rows = self.db.execute("SELECT id,payload FROM events WHERE exported=0 ORDER BY rowid LIMIT ?", (MAX_BATCH,)).fetchall()

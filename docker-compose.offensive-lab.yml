@@ -145,39 +145,6 @@ services:
     mem_limit: 128m
     restart: unless-stopped
 
-  offensive-runner:
-    image: aegis-offensive-runner:local
-    build:
-      context: .
-      dockerfile: Dockerfile.offensive-runner
-    environment:
-      ARTEX_OFFENSIVE_TOKEN_FILE: /run/offensive/token
-      OFFENSIVE_CRAPI_URL: http://crapi-web:80
-      OFFENSIVE_CRAPI_REVISION: 700f03d12a392d9e408260b4beae72ed02a4a1a4
-      OFFENSIVE_BENCHMARK_REVISION: 8b67a88d73b2594570fc21150705283de884620b
-      OFFENSIVE_TARGETS_DIR: /data/offensive/targets
-    volumes:
-      - ./.local-runtime/offensive/token:/run/offensive/token:ro
-      - ./.local-runtime/offensive/BenchmarkJava/src/main/java:/opt/benchmark/src/main/java:ro
-      - ./.local-runtime/offensive/crAPI/openapi-spec:/opt/crapi-schema:ro
-      - ./data/offensive/runs:/data/offensive/runs
-      - ./data/offensive/targets:/data/offensive/targets
-    # Only the assessment runner needs access to user-registered API servers.
-    # Vulnerable practice services stay on the internal lab network.
-    networks: [default, assessment-egress]
-    extra_hosts: ["host.docker.internal:host-gateway"]
-    init: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    mem_limit: 2g
-    cpus: 2
-    healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
-
   # This reverse proxy publishes the practice UI on loopback only.
   # Docker Desktop does not publish ports for containers on internal-only nets.
   lab-ingress:
@@ -202,7 +169,6 @@ networks:
     name: aegis-offensive-lab
     internal: true
   ingress: {}
-  assessment-egress: {}
 
 volumes:
   crapi-postgres:

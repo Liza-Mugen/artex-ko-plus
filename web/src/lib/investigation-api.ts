@@ -57,6 +57,9 @@ export interface InvestigationPlan {
   method: string;
   family: string;
   summary: string;
+  verified_facts?: { text: string; source: string }[] | null;
+  scenario_assumptions?: { text: string; source: string }[] | null;
+  context_warnings?: string[] | null;
   hypotheses: InvestigationHypothesis[] | null;
   limitations: string[] | null;
 }

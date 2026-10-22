@@ -16,12 +16,12 @@ const maxPurpleRequestBytes = 256 << 10
 
 func (s *Server) registerPurple(mux *http.ServeMux) {
 	// The main Handler wraps these routes with requireAuth, like findings.
-	s.registerPurpleReplays(mux)
 	s.registerPurpleExecutions(mux)
 	s.registerSecuritySources(mux)
 	s.registerInvestigations(mux)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/defense", s.getFindingDefense)
 	mux.HandleFunc("PUT /api/exploration/findings/{id}/defense", s.saveFindingDefense)
+	mux.HandleFunc("POST /api/exploration/findings/{id}/defense/scenario/generate", s.generateFindingDefenseScenario)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/defense/validations", s.addFindingDefenseValidation)
 	mux.HandleFunc("GET /api/purple/overview", s.purpleOverview)
 }
@@ -63,8 +63,6 @@ func writePurpleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, db.ErrDefenseExecutionNotFound):
 		writeErr(w, http.StatusNotFound, "방어 검증 실행을 찾을 수 없습니다")
-	case errors.Is(err, db.ErrDefenseReplayNotFound):
-		writeErr(w, http.StatusNotFound, "로그 재생 기록을 찾을 수 없습니다")
 	case errors.Is(err, db.ErrFindingNotFound):
 		writeErr(w, http.StatusNotFound, "취약점을 찾을 수 없습니다")
 	case errors.Is(err, db.ErrTaskArchiveState):

@@ -11,7 +11,7 @@ import (
 )
 
 func TestPurpleTaskArchiveDefenseLegacyTablesOptional(t *testing.T) {
-	// Packages created before defense records were added have neither key.
+	// Packages created before defense records or scenarios were added omit them.
 	for _, tables := range []map[string]json.RawMessage{nil, {
 		"finding_defense_plans":       json.RawMessage(`[]`),
 		"finding_defense_validations": json.RawMessage(`[]`),
@@ -67,6 +67,8 @@ func TestPurpleReplayLegacyManualArchiveRoundTrip(t *testing.T) {
 	}
 	delete(snapshot.Tables, "finding_defense_replays")
 	delete(snapshot.DataCounts, "finding_defense_replays")
+	delete(snapshot.Tables, "finding_defense_scenarios")
+	delete(snapshot.DataCounts, "finding_defense_scenarios")
 	if err = d.CompleteTaskArchive(archive.ID, snapshot, "/tmp/legacy-manual-defense.tar.zst", "fixture", 1, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +161,25 @@ func TestPurpleTaskArchiveDefenseRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	scenarioInput, err := d.GetDefenseScenarioInput(t.Context(), finding.FindingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO finding_defense_scenarios
+		(finding_id,evidence_version,source_fingerprint,source_config_fingerprint,payload)
+		VALUES($1,$2,$3,$4,$5::jsonb)`, finding.FindingID, scenarioInput.EvidenceVersion,
+		scenarioInput.SourceFingerprint, scenarioInput.SourceConfigFingerprint, `{"scenario":"archive round trip"}`); err != nil {
+		t.Fatal(err)
+	}
+	var scenarioID int64
+	var scenarioBefore []byte
+	if err := d.QueryRow(`SELECT id,to_jsonb(s) FROM finding_defense_scenarios s WHERE finding_id=$1`, finding.FindingID).Scan(&scenarioID, &scenarioBefore); err != nil {
+		t.Fatal(err)
+	}
+	before, err = d.GetFindingDefense(t.Context(), finding.FindingID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := d.SetPaused(task.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -193,13 +214,13 @@ func TestPurpleTaskArchiveDefenseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.DataCounts["finding_defense_plans"] != 1 || snapshot.DataCounts["finding_defense_validations"] != 2 || snapshot.DataCounts["finding_defense_replays"] != 2 {
+	if snapshot.DataCounts["finding_defense_plans"] != 1 || snapshot.DataCounts["finding_defense_scenarios"] != 1 || snapshot.DataCounts["finding_defense_validations"] != 2 || snapshot.DataCounts["finding_defense_replays"] != 2 {
 		t.Fatalf("defense archive counts: %#v", snapshot.DataCounts)
 	}
 	if err := d.CompleteTaskArchive(archive.ID, snapshot, "/tmp/defense-roundtrip.tar.zst", "fixture", 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"finding_defense_plans", "finding_defense_validations", "finding_defense_replays"} {
+	for _, table := range []string{"finding_defense_plans", "finding_defense_scenarios", "finding_defense_validations", "finding_defense_replays"} {
 		var count int
 		if err := d.QueryRow(`SELECT count(*) FROM `+table+` WHERE finding_id=$1`, finding.FindingID).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -232,6 +253,20 @@ func TestPurpleTaskArchiveDefenseRoundTrip(t *testing.T) {
 	if !bytes.Equal(want, got) {
 		t.Fatalf("defense plan/history changed across archive restore\nbefore: %s\nafter: %s", want, got)
 	}
+	var scenarioAfter []byte
+	if err := d.QueryRow(`SELECT to_jsonb(s) FROM finding_defense_scenarios s WHERE finding_id=$1`, finding.FindingID).Scan(&scenarioAfter); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(scenarioBefore, scenarioAfter) {
+		t.Fatalf("defense scenario changed across archive restore\nbefore: %s\nafter: %s", scenarioBefore, scenarioAfter)
+	}
+	var nextScenarioID int64
+	if err := d.QueryRow(`SELECT nextval(pg_get_serial_sequence('finding_defense_scenarios','id')::regclass)`).Scan(&nextScenarioID); err != nil {
+		t.Fatal(err)
+	}
+	if nextScenarioID <= scenarioID {
+		t.Fatalf("scenario sequence fell behind restored row: next=%d restored=%d", nextScenarioID, scenarioID)
+	}
 	for _, beforeReplay := range replaysBefore {
 		afterReplay, err := d.ExportDefenseReplay(t.Context(), finding.FindingID, beforeReplay.ID)
 		if err != nil {
@@ -261,7 +296,7 @@ func TestPurpleTaskArchiveDefenseRejectsForeignFinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"finding_defense_plans", "finding_defense_validations", "finding_defense_replays"} {
+	for _, table := range []string{"finding_defense_plans", "finding_defense_scenarios", "finding_defense_validations", "finding_defense_replays"} {
 		err := restoreFindingDefenseTx(tx, &TaskArchiveSnapshot{TaskID: 1, Tables: map[string]json.RawMessage{
 			table: json.RawMessage(fmt.Sprintf(`[{"finding_id":%d}]`, id)),
 		}})

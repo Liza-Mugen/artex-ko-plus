@@ -504,21 +504,6 @@ export default function OffensivePage() {
         </div>
       </div>
 
-      <Link
-        href="/offensive/assessments/"
-        className="group flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4 transition-colors hover:bg-primary/10"
-      >
-        <div>
-          <p className="text-sm font-semibold">API · 소스 코드 진단</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            API 명세 · URL · HAR · 소스 ZIP → 대상 선택 → 도구 진단 → ARTEX 심층 검토
-          </p>
-        </div>
-        <span className="flex items-center gap-1 text-sm font-medium text-primary">
-          진단 시작 <ArrowUpRightIcon className="size-4" />
-        </span>
-      </Link>
-
       {/* ── Row 1: 5 stat cards ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {/* 活跃任务 */}

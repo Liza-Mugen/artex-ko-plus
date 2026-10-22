@@ -80,6 +80,35 @@ func TestDefensiveCaseNoFindingIndependentSnapshot(t *testing.T) {
 		t.Fatal("missing case accepted", err)
 	}
 }
+func TestDefensiveCaseDeleteBlocksActiveRunAndCascadesStoppedRuns(t *testing.T) {
+	d := defensiveDB(t)
+	c := saveDefensiveCaseForTest(t, d)
+	run, created, err := d.CreateDefensiveCaseRun(t.Context(), c.ID, json.RawMessage(`{}`))
+	if err != nil || !created {
+		t.Fatal("create run", err)
+	}
+	if err = d.DeleteDefensiveCase(t.Context(), c.ID); !errors.Is(err, ErrDefensiveCaseActive) {
+		t.Fatal("active case was deleted", err)
+	}
+	if _, err = d.GetDefensiveCase(t.Context(), c.ID); err != nil {
+		t.Fatal("active case lost", err)
+	}
+	if _, err = d.CancelDefensiveCaseRun(t.Context(), c.ID, run.ID); err != nil {
+		t.Fatal("cancel run", err)
+	}
+	if err = d.DeleteDefensiveCase(t.Context(), c.ID); err != nil {
+		t.Fatal("delete stopped case", err)
+	}
+	if _, err = d.GetDefensiveCase(t.Context(), c.ID); !errors.Is(err, ErrDefensiveCaseNotFound) {
+		t.Fatal("deleted case remained", err)
+	}
+	if _, err = d.GetDefensiveCaseRun(t.Context(), c.ID, run.ID); !errors.Is(err, ErrDefensiveCaseRunNotFound) {
+		t.Fatal("case-owned run remained", err)
+	}
+	if err = d.DeleteDefensiveCase(t.Context(), c.ID); !errors.Is(err, ErrDefensiveCaseNotFound) {
+		t.Fatal("repeated deletion was accepted", err)
+	}
+}
 func TestDefensiveCaseOptionalFindingSurvivesDelete(t *testing.T) {
 	d, id := purpleDB(t)
 	overview, err := d.GetInvestigationOverview(t.Context(), id)

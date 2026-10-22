@@ -451,7 +451,7 @@ detections/tests/misp/run.sh
 
 새 탐지 규칙은 그것이 발화함을 보여 주는 테스트가 있을 때 더 강합니다. 테스트는 자기 입력을 결정론적으로
 생성하고, 엔진 버전과 무관한 속성은 정확히 단언하며(그보다 무른 속성은 기준값을 기록한 하한으로), 공격
-안내로 읽힐 수 있는 내용은 피해야 합니다. [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) 와
+안내로 읽힐 수 있는 내용은 피해야 합니다. `../../CONTRIBUTING.md` 와
 [`../README.ko.md`](../README.ko.md) 의 규칙 색인을 보십시오.
 
 여덟 스위트는 모두 `detections/` 를 건드리는 모든 push 나 pull request 에서 CI 로 돕니다

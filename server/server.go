@@ -109,6 +109,7 @@ type Server struct {
 
 	offensiveReviewInitMu  sync.Mutex
 	offensiveReviewRuntime *offensiveReviewRuntime
+	offensiveDiagnosticMu  sync.Mutex
 
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
@@ -144,6 +145,9 @@ type Server struct {
 	// Historical investigations have a separate, bounded read-only runtime.
 	investigationMu     sync.Mutex
 	investigationCancel map[int64]context.CancelFunc
+	// scenarioMu makes repeated generate requests share the cached draft before
+	// another paid model call starts. Generation is intentionally bounded to one.
+	scenarioMu sync.Mutex
 
 	// triggerQ buffers P3 trigger fires PER AGENT. A per-agent "pump" launches runs up
 	// to a concurrency limit derived from the agent's策略: serial → limit 1 (+ optional
@@ -735,7 +739,6 @@ func (s *Server) chatAgentRef() *agent.ChatAgent {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.registerSideRoutes(mux)
-	s.registerOffensiveAssessments(mux)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
 	mux.HandleFunc("GET /api/auth/status", s.authStatus)
@@ -758,6 +761,10 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)
+	// The added scanner endpoints are retired. Keep historical records on disk,
+	// but direct new work through the original /api/tasks workflow.
+	mux.HandleFunc("/api/offensive", retiredOffensiveAssessment)
+	mux.HandleFunc("/api/offensive/", retiredOffensiveAssessment)
 	mux.HandleFunc("GET /api/task-categories", s.pgListTaskCategories)
 	mux.HandleFunc("POST /api/task-categories", s.pgCreateTaskCategory)
 	mux.HandleFunc("PATCH /api/task-categories/{id}", s.pgRenameTaskCategory)

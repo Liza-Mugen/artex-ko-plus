@@ -17,21 +17,41 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
-var ErrInvalid = errors.New("보안 로그 연결 설정이 올바르지 않습니다")
+var (
+	ErrInvalid           = errors.New("보안 로그 연결 설정이 올바르지 않습니다")
+	ErrSplunkAuth        = errors.New("Splunk 인증에 실패했습니다")
+	ErrSplunkPermission  = errors.New("Splunk 조회 권한이 없습니다")
+	ErrSplunkUnavailable = errors.New("Splunk 연결 또는 서비스에 실패했습니다")
+	ErrSplunkSearch      = errors.New("Splunk 검색을 완료하지 못했습니다")
+)
+
+// LogStream is one explicitly configured, read-only Splunk search source.
+// A connection may contain audit and alert streams in different indexes.
+type LogStream struct {
+	Index      string `json:"index"`
+	Sourcetype string `json:"sourcetype"`
+	Kind       string `json:"kind"`
+	Label      string `json:"label,omitempty"`
+	Asset      string `json:"asset,omitempty"`
+}
 
 type Config struct {
-	BaseURL          string `json:"base_url"`
-	Index            string `json:"index"`
-	AuditSourcetype  string `json:"audit_sourcetype"`
-	AlertSourcetype  string `json:"alert_sourcetype"`
-	CorrelationField string `json:"correlation_field"`
-	ActionField      string `json:"action_field"`
-	TLSFingerprint   string `json:"tls_fingerprint"`
+	BaseURL          string      `json:"base_url"`
+	Index            string      `json:"index"`
+	AuditSourcetype  string      `json:"audit_sourcetype"`
+	AlertSourcetype  string      `json:"alert_sourcetype"`
+	Streams          []LogStream `json:"streams,omitempty"`
+	CorrelationField string      `json:"correlation_field"`
+	ActionField      string      `json:"action_field"`
+	TLSFingerprint   string      `json:"tls_fingerprint"`
 }
 type Credentials struct {
 	Username string `json:"username"`
@@ -45,6 +65,8 @@ type Query struct {
 type Event struct {
 	ID            string          `json:"id"`
 	Kind          string          `json:"kind"`
+	Index         string          `json:"index,omitempty"`
+	Sourcetype    string          `json:"sourcetype,omitempty"`
 	CorrelationID string          `json:"correlation_id"`
 	OccurredAt    time.Time       `json:"occurred_at"`
 	Action        string          `json:"action"`
@@ -69,6 +91,7 @@ var correlationName = regexp.MustCompile(`^[A-Za-z0-9-]{16,80}$`)
 
 const maxResponseBytes = 4 << 20
 const maxRows = 200
+const maxLogStreams = 16
 
 // An explicit numeric offset avoids the ambiguous timezone abbreviations used
 // by Splunk's default export format. Preserve microsecond request timestamps.
@@ -102,8 +125,43 @@ func Validate(c Config) (Config, error) {
 	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return c, fmt.Errorf("%w: HTTPS 관리 주소만 입력해 주세요 (경로·계정·쿼리 제외)", ErrInvalid)
 	}
-	if !sourceName.MatchString(c.Index) || !sourceName.MatchString(c.AuditSourcetype) || !sourceName.MatchString(c.AlertSourcetype) || c.AuditSourcetype == c.AlertSourcetype {
-		return c, fmt.Errorf("%w: 인덱스와 서로 다른 감사·경보 sourcetype이 필요합니다", ErrInvalid)
+	if len(c.Streams) == 0 {
+		if !sourceName.MatchString(c.Index) || !sourceName.MatchString(c.AuditSourcetype) || !sourceName.MatchString(c.AlertSourcetype) || c.AuditSourcetype == c.AlertSourcetype {
+			return c, fmt.Errorf("%w: 인덱스와 서로 다른 감사·경보 sourcetype이 필요합니다", ErrInvalid)
+		}
+		c.Streams = EffectiveStreams(c)
+	} else {
+		c.Streams = slices.Clone(c.Streams)
+		// Legacy scalars may accompany a newer stream list, but invalid values
+		// must not be silently accepted or later used by an older workflow.
+		for _, value := range []string{c.Index, c.AuditSourcetype, c.AlertSourcetype} {
+			if value != "" && !sourceName.MatchString(value) {
+				return c, fmt.Errorf("%w: 이전 형식의 인덱스·sourcetype 이름을 확인해 주세요", ErrInvalid)
+			}
+		}
+	}
+	if len(c.Streams) > maxLogStreams {
+		return c, fmt.Errorf("%w: 로그 스트림은 최대 16개까지 등록할 수 있습니다", ErrInvalid)
+	}
+	seen := make(map[string]bool, len(c.Streams))
+	hasAudit, hasAlert := false, false
+	for i := range c.Streams {
+		s := &c.Streams[i]
+		s.Label, s.Asset = strings.TrimSpace(s.Label), strings.TrimSpace(s.Asset)
+		if !sourceName.MatchString(s.Index) || !sourceName.MatchString(s.Sourcetype) || (s.Kind != "audit" && s.Kind != "alert") ||
+			!safeStreamDescription(s.Label, 120) || !safeStreamDescription(s.Asset, 256) {
+			return c, fmt.Errorf("%w: 로그 스트림의 인덱스·sourcetype·종류·표시 이름을 확인해 주세요", ErrInvalid)
+		}
+		key := s.Index + "\x00" + s.Sourcetype
+		if seen[key] {
+			return c, fmt.Errorf("%w: 중복된 로그 스트림이 있습니다", ErrInvalid)
+		}
+		seen[key] = true
+		hasAudit = hasAudit || s.Kind == "audit"
+		hasAlert = hasAlert || s.Kind == "alert"
+	}
+	if !hasAudit || !hasAlert {
+		return c, fmt.Errorf("%w: 감사·경보 로그 스트림이 각각 하나 이상 필요합니다", ErrInvalid)
 	}
 	if !fieldName.MatchString(c.CorrelationField) || !fieldName.MatchString(c.ActionField) {
 		return c, fmt.Errorf("%w: 상관 ID·조치 필드 이름을 확인해 주세요", ErrInvalid)
@@ -116,6 +174,31 @@ func Validate(c Config) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+func safeStreamDescription(value string, maxRunes int) bool {
+	return utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxRunes && strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
+// EffectiveStreams resolves the two legacy sourcetypes without changing the
+// saved config. Call Validate before using these values in a remote query.
+func EffectiveStreams(c Config) []LogStream {
+	if len(c.Streams) != 0 {
+		return slices.Clone(c.Streams)
+	}
+	return []LogStream{
+		{Index: c.Index, Sourcetype: c.AuditSourcetype, Kind: "audit"},
+		{Index: c.Index, Sourcetype: c.AlertSourcetype, Kind: "alert"},
+	}
+}
+
+// EqualConfig compares the effective search behavior. Migrating unchanged
+// legacy index fields into streams must not stale an execution or bump a
+// connection revision merely because the JSON representation changed.
+func EqualConfig(a, b Config) bool {
+	return a.BaseURL == b.BaseURL && a.CorrelationField == b.CorrelationField &&
+		a.ActionField == b.ActionField && a.TLSFingerprint == b.TLSFingerprint &&
+		slices.Equal(EffectiveStreams(a), EffectiveStreams(b))
 }
 func ValidateCredentials(c Credentials) error {
 	if c.Token != "" {
@@ -179,10 +262,19 @@ func request(ctx context.Context, c Config, auth Credentials, path string, form 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("Splunk 연결에 실패했습니다. 주소·인증서·네트워크를 확인해 주세요")
+		return nil, fmt.Errorf("%w: 주소·인증서·네트워크를 확인해 주세요", ErrSplunkUnavailable)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		switch res.StatusCode {
+		case http.StatusUnauthorized:
+			return nil, ErrSplunkAuth
+		case http.StatusForbidden:
+			return nil, ErrSplunkPermission
+		}
+		if res.StatusCode >= http.StatusInternalServerError {
+			return nil, ErrSplunkUnavailable
+		}
 		return nil, fmt.Errorf("Splunk 조회가 HTTP %d로 거절됐습니다. 연결 계정과 검색 권한을 확인해 주세요", res.StatusCode)
 	}
 	b, e := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
@@ -216,6 +308,96 @@ func Test(ctx context.Context, c Config, auth Credentials) error {
 	return nil
 }
 
+// ListIndexes reads the indexes visible to this credential through Splunk's
+// management API. The response is sorted, allowlisted, and capped for the UI.
+func ListIndexes(ctx context.Context, c Config, auth Credentials) ([]string, error) {
+	var err error
+	c, err = Validate(c)
+	if err != nil {
+		return nil, err
+	}
+	if err = ValidateCredentials(auth); err != nil {
+		return nil, err
+	}
+	const limit = 128
+	body, err := request(ctx, c, auth, "/services/data/indexes?output_mode=json&count=128", nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Entry []struct {
+			Name string `json:"name"`
+		} `json:"entry"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Entry == nil {
+		return nil, fmt.Errorf("%w: 인덱스 목록 응답 형식을 확인하지 못했습니다", ErrSplunkSearch)
+	}
+	indexes := make([]string, 0, min(len(payload.Entry), limit))
+	seen := make(map[string]bool)
+	for _, entry := range payload.Entry {
+		if !sourceName.MatchString(entry.Name) || seen[entry.Name] {
+			continue
+		}
+		seen[entry.Name] = true
+		indexes = append(indexes, entry.Name)
+		if len(indexes) == limit {
+			break
+		}
+	}
+	slices.Sort(indexes)
+	return indexes, nil
+}
+
+type StreamTestResult struct {
+	Index           string `json:"index"`
+	Sourcetype      string `json:"sourcetype"`
+	Kind            string `json:"kind"`
+	Searchable      bool   `json:"searchable"`
+	HasRecentEvents bool   `json:"has_recent_events"`
+	Detail          string `json:"detail"`
+}
+
+// TestStream probes one configured stream with a read-only 15-minute search.
+// A completed zero-result search is distinguishable from a rejected or partial
+// search; neither proves long-term retention or sensor coverage.
+func TestStream(ctx context.Context, c Config, auth Credentials, streamIndex int) (StreamTestResult, error) {
+	var result StreamTestResult
+	var err error
+	c, err = Validate(c)
+	if err != nil {
+		return result, err
+	}
+	if err = ValidateCredentials(auth); err != nil {
+		return result, err
+	}
+	if streamIndex < 0 || streamIndex >= len(c.Streams) {
+		return result, fmt.Errorf("%w: 로그 스트림 번호를 확인해 주세요", ErrInvalid)
+	}
+	s := c.Streams[streamIndex]
+	result.Index, result.Sourcetype, result.Kind = s.Index, s.Sourcetype, s.Kind
+	now := time.Now().UTC()
+	search := fmt.Sprintf(`search index="%s" sourcetype="%s" | head 1`, s.Index, s.Sourcetype)
+	body, err := request(ctx, c, auth, "/services/search/v2/jobs/export", url.Values{
+		"search": {search}, "output_mode": {"json"}, "preview": {"false"},
+		"earliest_time": {investigationEpoch(now.Add(-15 * time.Minute))}, "latest_time": {investigationEpoch(now)},
+	})
+	if err != nil {
+		return result, err
+	}
+	_, rows, complete, _, err := parseInvestigationExport(body)
+	if err != nil || !complete || !closedLoopTerminal(body) || rows > 1 {
+		return result, fmt.Errorf("%w: 로그 스트림의 완료된 검색 결과를 확인하지 못했습니다", ErrSplunkSearch)
+	}
+	result.Searchable = true
+	result.HasRecentEvents = rows == 1
+	if result.HasRecentEvents {
+		result.Detail = "최근 15분 이내 이벤트 1건을 확인했습니다"
+	} else {
+		result.Detail = "검색은 완료됐지만 최근 15분 이내 이벤트는 없습니다"
+	}
+	return result, nil
+}
+
 func Fetch(ctx context.Context, c Config, auth Credentials, q Query) (*Evidence, error) {
 	c, e := Validate(c)
 	if e != nil {
@@ -227,16 +409,19 @@ func Fetch(ctx context.Context, c Config, auth Credentials, q Query) (*Evidence,
 	if !correlationName.MatchString(q.CorrelationID) || q.Start.IsZero() || !q.End.After(q.Start) || q.End.Sub(q.Start) > 24*time.Hour || q.End.After(time.Now().Add(5*time.Second)) {
 		return nil, fmt.Errorf("%w: 실행 식별자 또는 조회 시간 범위를 확인해 주세요 (최대 24시간)", ErrInvalid)
 	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	out := &Evidence{Events: []Event{}, Complete: true, Warnings: []string{}, WindowStart: q.Start.UTC(), WindowEnd: q.End.UTC()}
-	for _, s := range []struct{ kind, st string }{{"audit", c.AuditSourcetype}, {"alert", c.AlertSourcetype}} {
+	seen := make(map[string][32]byte)
+	for _, s := range c.Streams {
 		// Names have restrictive allowlists, and the correlation ID is generated
 		// by ARTEX. No free-form query or state-changing command is accepted.
-		search := fmt.Sprintf(`search index="%s" sourcetype="%s" | spath%s | where '%s' = "%s" | head %d`, c.Index, s.st, splunkDeduplicateFields(c.CorrelationField, c.ActionField), c.CorrelationField, q.CorrelationID, maxRows+1)
+		search := fmt.Sprintf(`search index="%s" sourcetype="%s" | spath%s | where '%s' = "%s" | head %d`, s.Index, s.Sourcetype, splunkDeduplicateFields(c.CorrelationField, c.ActionField), c.CorrelationField, q.CorrelationID, maxRows+1)
 		b, e := request(ctx, c, auth, "/services/search/v2/jobs/export", url.Values{"search": {search}, "output_mode": {"json"}, "output_time_format": {splunkOutputTimeFormat}, "earliest_time": {strconv.FormatFloat(float64(q.Start.UnixNano())/1e9, 'f', 6, 64)}, "latest_time": {strconv.FormatFloat(float64(q.End.UnixNano())/1e9, 'f', 6, 64)}, "preview": {"false"}})
 		if e != nil {
 			return nil, e
 		}
-		if e = parseExport(b, s.kind, c, q, out); e != nil {
+		if e = parseStreamExport(b, s, c, q, out, seen); e != nil {
 			return nil, e
 		}
 	}
@@ -272,10 +457,19 @@ func eventTime(v any) (time.Time, error) {
 	return time.Time{}, errors.New("시각이 올바르지 않습니다")
 }
 func parseExport(b []byte, kind string, c Config, q Query, out *Evidence) error {
+	s := LogStream{Index: c.Index, Kind: kind}
+	if kind == "audit" {
+		s.Sourcetype = c.AuditSourcetype
+	} else {
+		s.Sourcetype = c.AlertSourcetype
+	}
+	return parseStreamExport(b, s, c, q, out, make(map[string][32]byte))
+}
+
+func parseStreamExport(b []byte, stream LogStream, c Config, q Query, out *Evidence, seen map[string][32]byte) error {
 	scan := bufio.NewScanner(strings.NewReader(string(b)))
 	scan.Buffer(make([]byte, 4096), maxResponseBytes)
 	count := 0
-	seen := map[string][32]byte{}
 	lastResultComplete, sawTerminal := false, false
 	for scan.Scan() {
 		if strings.TrimSpace(scan.Text()) == "" {
@@ -331,10 +525,20 @@ func parseExport(b []byte, kind string, c Config, q Query, out *Evidence) error 
 		lastResultComplete, sawTerminal = row.LastRow, false
 		if count > maxRows {
 			out.Complete = false
-			out.Warnings = append(out.Warnings, kind+" 검색이 200건을 초과하여 판정을 보류합니다")
+			out.Warnings = append(out.Warnings, stream.Kind+" 검색이 200건을 초과하여 판정을 보류합니다")
 			continue
 		}
 		m := row.Result
+		if index, present := m["index"]; present && textField(index) != stream.Index {
+			out.Complete = false
+			out.Warnings = append(out.Warnings, "설정된 인덱스 밖의 이벤트가 반환됐습니다")
+			continue
+		}
+		if st, present := m["sourcetype"]; present && stream.Sourcetype != "" && textField(st) != stream.Sourcetype {
+			out.Complete = false
+			out.Warnings = append(out.Warnings, "설정된 sourcetype 밖의 이벤트가 반환됐습니다")
+			continue
+		}
 		var raw map[string]any
 		if s, ok := m["_raw"].(string); ok {
 			d := json.NewDecoder(strings.NewReader(s))
@@ -365,15 +569,16 @@ func parseExport(b []byte, kind string, c Config, q Query, out *Evidence) error 
 		if id == "" {
 			id = hex.EncodeToString(sum[:])
 		}
-		id = c.Index + ":" + textField(m["splunk_server"]) + ":" + textField(m["_bkt"]) + ":" + id
-		if previous, exists := seen[id]; exists {
+		id = stream.Index + ":" + textField(m["splunk_server"]) + ":" + textField(m["_bkt"]) + ":" + id
+		identity := stream.Kind + "\x00" + id
+		if previous, exists := seen[identity]; exists {
 			if previous != sum {
 				out.Complete = false
 				out.Warnings = append(out.Warnings, "같은 이벤트 ID에 서로 다른 근거가 반환되어 판정을 보류합니다")
 			}
 			continue
 		}
-		seen[id] = sum
+		seen[identity] = sum
 		a := field(m, c.ActionField)
 		if a == nil {
 			a = field(raw, c.ActionField)
@@ -385,7 +590,12 @@ func parseExport(b []byte, kind string, c Config, q Query, out *Evidence) error 
 		case "allow", "allowed", "pass", "passed":
 			action = "allowed"
 		}
-		out.Events = append(out.Events, Event{ID: id, Kind: kind, CorrelationID: q.CorrelationID, OccurredAt: t, Action: action, Raw: payload})
+		if len(out.Events) >= maxRows {
+			out.Complete = false
+			out.Warnings = append(out.Warnings, "전체 로그가 200건을 초과하여 판정을 보류합니다")
+			continue
+		}
+		out.Events = append(out.Events, Event{ID: id, Kind: stream.Kind, Index: stream.Index, Sourcetype: stream.Sourcetype, CorrelationID: q.CorrelationID, OccurredAt: t, Action: action, Raw: payload})
 	}
 	if scan.Err() != nil {
 		return errors.New("Splunk 검색 응답이 잘렸습니다")

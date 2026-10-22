@@ -37,6 +37,7 @@ const runPath = (id: string) => `${casePath(id)}/runs`;
 export const defensiveApi = {
   list: () => http<{ cases: DefensiveCaseSummary[]; total: number; history_truncated?: boolean }>("/defensive/cases"),
   get: (id: string) => http<DefensiveCase>(casePath(id)),
+  delete: (id: string) => http<{ deleted: string }>(casePath(id), { method: "DELETE" }),
   create: (input: DefensiveCaseInput) =>
     http<DefensiveCase>("/defensive/cases", { method: "POST", body: JSON.stringify(input) }),
   preview: (input: DefensiveCaseInput) =>

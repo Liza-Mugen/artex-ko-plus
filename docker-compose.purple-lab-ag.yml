@@ -1,0 +1,61 @@
+# Use with docker-compose.purple-lab.yml to retain the active AG lab Splunk
+# image and data volumes.
+services:
+  # One-shot bootstrap used by the running 10.4.1 lab. The active volumes are
+  # already initialized; select the bootstrap profile only for empty volumes.
+  splunk-volume-init:
+    profiles: [bootstrap]
+    image: splunk/splunk-amd64-linux:5a009d941268-rhel9@sha256:087670d68a149f157c06a24bf0d9797dd5d34c8ca25cfbacb88ac22f94ea8c6a
+    user: "0:0"
+    entrypoint: [/bin/sh, -c]
+    command: >-
+      set -eu;
+      if [ ! -d /opt/splunk/etc/apps/splunk_httpinput ]; then
+        cp -a /opt/splunk-etc/. /opt/splunk/etc/;
+      fi;
+      mkdir -p /opt/splunk/etc/apps/artex_lab/default /opt/splunk/etc/apps/artex_lab/metadata;
+      chown -R splunk:splunk /opt/splunk/etc /opt/splunk/var
+    network_mode: none
+    volumes:
+      - splunk-etc:/opt/splunk/etc
+      - splunk-var:/opt/splunk/var
+    restart: "no"
+
+  splunk:
+    image: splunk/splunk-amd64-linux:5a009d941268-rhel9@sha256:087670d68a149f157c06a24bf0d9797dd5d34c8ca25cfbacb88ac22f94ea8c6a
+    environment:
+      # Splunk-Ansible reads a file path here, so the current admin password
+      # stays out of the container environment and Compose output.
+      SPLUNK_PASSWORD: /run/lab-secrets/splunk-admin-current-password
+    volumes:
+      - type: bind
+        source: ./.local-runtime/purple-lab/splunk-admin-current-password
+        target: /run/lab-secrets/splunk-admin-current-password
+        read_only: true
+        bind:
+          create_host_path: false
+
+  collector:
+    environment:
+      SPLUNK_INDEX: ag_juice_shop
+    volumes:
+      - type: bind
+        source: ./.local-runtime/purple-lab-ag/hec-token
+        target: /run/lab-secrets/hec-token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local-runtime/purple-lab-ag/splunk-hec.sha256
+        target: /run/lab-secrets/splunk-hec.sha256
+        read_only: true
+        bind:
+          create_host_path: false
+
+volumes:
+  splunk-etc:
+    external: true
+    name: artex-purple-lab_splunk-etc-ag-1041
+  splunk-var:
+    external: true
+    name: artex-purple-lab_splunk-var-ag-1041

@@ -61,6 +61,33 @@ func (d *DB) ListSecuritySources(ctx context.Context) ([]*SecuritySource, error)
 	}
 	return out, rows.Err()
 }
+
+// DeleteSecuritySource removes the saved connection and its credentials. Past
+// investigations and executions retain their independent source snapshots.
+func (d *DB) DeleteSecuritySource(ctx context.Context, id, expected int64) error {
+	if id <= 0 || expected <= 0 {
+		return ErrDefenseInvalid
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var revision int64
+	if err = tx.QueryRowContext(ctx, `SELECT revision FROM security_sources WHERE id=$1 FOR UPDATE`, id).Scan(&revision); errors.Is(err, sql.ErrNoRows) {
+		return ErrSecuritySourceNotFound
+	} else if err != nil {
+		return err
+	}
+	if revision != expected {
+		return ErrDefenseConflict
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM security_sources WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (d *DB) SaveSecuritySource(ctx context.Context, id, expected int64, name string, cfg securitysource.Config, enabled bool, cipher []byte) (*SecuritySource, error) {
 	name = strings.TrimSpace(name)
 	if !utf8.ValidString(name) || strings.ContainsRune(name, 0) || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 120 {
@@ -103,7 +130,7 @@ func (d *DB) SaveSecuritySource(ctx context.Context, id, expected int64, name st
 		}
 		cipher = old.SecretCipher
 	}
-	if old.Name == name && old.Config == cfg && old.Enabled == enabled && string(old.SecretCipher) == string(cipher) {
+	if old.Name == name && securitysource.EqualConfig(old.Config, cfg) && old.Enabled == enabled && string(old.SecretCipher) == string(cipher) {
 		return old, tx.Commit()
 	}
 	raw, _ := json.Marshal(cfg)

@@ -21,6 +21,38 @@ import (
 const offensiveTestToken = "offensive-runner-private-test-token"
 
 func offensiveProxyFixture(t *testing.T, upstream http.Handler) (*Server, func(string, string, string) *httptest.ResponseRecorder) {
+	return offensiveFixture(t, upstream, false)
+}
+
+// Legacy helpers remain tested for reading historical evidence; production POST
+// routes are separately asserted to return 410 by diagnostic route tests.
+func offensiveLegacyProxyFixture(t *testing.T, upstream http.Handler) (*Server, func(string, string, string) *httptest.ResponseRecorder) {
+	return offensiveFixture(t, upstream, true)
+}
+
+func offensiveLegacyHandler(s *Server) http.Handler {
+	mux := http.NewServeMux()
+	for _, path := range []string{"/catalog", "/runs", "/runs/{id}", "/runs/{id}/artifacts/{name}"} {
+		mux.HandleFunc("GET /api/offensive"+path, func(w http.ResponseWriter, r *http.Request) { s.proxyOffensiveAssessment(w, r, path) })
+	}
+	mux.HandleFunc("POST /api/offensive/runs", func(w http.ResponseWriter, r *http.Request) { s.proxyOffensiveAssessment(w, r, "/runs") })
+	mux.HandleFunc("POST /api/offensive/runs/{id}/review", s.reviewOffensiveAssessment)
+	mux.HandleFunc("GET /api/offensive/runs/{id}/candidate-review", s.getOffensiveCandidateReview)
+	mux.HandleFunc("POST /api/offensive/runs/{id}/candidate-review", s.startOffensiveCandidateReview)
+	mux.HandleFunc("POST /api/offensive/runs/{id}/candidate-review/cancel", s.cancelOffensiveCandidateReview)
+	mux.HandleFunc("POST /api/offensive/targets", s.uploadOffensiveTarget)
+	return s.requireAuth(mux)
+}
+
+// Exercise the retired diagnostic implementation in isolation. Production's
+// Server.Handler deliberately exposes only the original Tasks API.
+func offensiveDiagnosticHandler(s *Server) http.Handler {
+	mux := http.NewServeMux()
+	s.registerOffensiveDiagnostics(mux)
+	return s.requireAuth(mux)
+}
+
+func offensiveFixture(t *testing.T, upstream http.Handler, legacy bool) (*Server, func(string, string, string) *httptest.ResponseRecorder) {
 	t.Helper()
 	runner := httptest.NewServer(upstream)
 	t.Cleanup(runner.Close)
@@ -35,7 +67,10 @@ func offensiveProxyFixture(t *testing.T, upstream http.Handler) (*Server, func(s
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := s.Handler()
+	handler := offensiveDiagnosticHandler(s)
+	if legacy {
+		handler = offensiveLegacyHandler(s)
+	}
 	return s, func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer "+token)
@@ -71,13 +106,7 @@ func TestOffensiveAuthenticationAndUnavailable(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+token)
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
-		want := 503
-		if route.path == "/catalog" {
-			want = 200
-			if !strings.Contains(w.Body.String(), `"ready":false`) {
-				t.Fatal(w.Body.String())
-			}
-		}
+		want := 410
 		if w.Code != want || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("%s = %d %s", path, w.Code, w.Body.String())
 		}
@@ -87,7 +116,7 @@ func TestOffensiveAuthenticationAndUnavailable(t *testing.T) {
 func TestOffensiveScopeValidationAndCredentialIsolation(t *testing.T) {
 	var calls atomic.Int32
 	id := uuid.NewString()
-	_, request := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, request := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != "Bearer "+offensiveTestToken || r.Header.Get("Cookie") != "" || r.Header.Get("X-Private-Browser-Header") != "" {
 			t.Error("credential isolation failed")
@@ -127,7 +156,7 @@ func TestOffensiveScopeValidationAndCredentialIsolation(t *testing.T) {
 
 func TestOffensiveArtifactAndRedirectHandling(t *testing.T) {
 	id := uuid.NewString()
-	_, request := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, request := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/redirect.json"):
 			w.Header().Set("Location", "http://outside.invalid/private")
@@ -160,7 +189,7 @@ func TestOffensiveArtifactAndRedirectHandling(t *testing.T) {
 }
 
 func TestOffensiveInvalidConfigurationAndMalformedResponse(t *testing.T) {
-	_, request := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"ok":true}{"extra":true}`) }))
+	_, request := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"ok":true}{"extra":true}`) }))
 	w := request("GET", "/api/offensive/catalog", "")
 	if w.Code != 502 {
 		t.Fatal(w.Code)
@@ -205,7 +234,7 @@ func TestOffensiveReviewGoalsSeparateStaticAndRuntimeEvidence(t *testing.T) {
 func TestOffensiveReviewRejectsIncompleteRunAndReusesAttachedTask(t *testing.T) {
 	id := uuid.NewString()
 	status := "running"
-	s, request := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, request := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Error("unexpected task mutation")
 		}
@@ -238,7 +267,7 @@ func TestOffensiveReviewRetryAfterAssociationFailureDoesNotDuplicateTask(t *test
 	var binds atomic.Int32
 	var mu sync.Mutex
 	bound := ""
-	s, request := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, request := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		if r.Method == "POST" {
@@ -326,14 +355,14 @@ func offensiveMultipartRequest(t *testing.T, s *Server, parts []offensiveUploadP
 	r.Header.Set("Content-Type", writer.FormDataContentType())
 	r.Header.Set("Cookie", "private-browser-cookie")
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
+	offensiveLegacyHandler(s).ServeHTTP(w, r)
 	return w
 }
 
 func TestOffensiveUploadForwardsOnlyBoundedTargetData(t *testing.T) {
 	id := uuid.NewString()
 	var received map[string]string
-	s, _ := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, _ := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/targets" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer "+offensiveTestToken || r.Header.Get("Cookie") != "" {
 			t.Error("invalid upstream upload request")
 		}
@@ -366,7 +395,7 @@ func TestOffensiveUploadForwardsOnlyBoundedTargetData(t *testing.T) {
 
 func TestOffensiveUploadRejectsAmbiguousOrOversizeInput(t *testing.T) {
 	var calls atomic.Int32
-	s, _ := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, _ := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		io.WriteString(w, `{}`)
 	}))
@@ -408,7 +437,7 @@ func TestOffensiveCustomRunSelectionAndTransientBearer(t *testing.T) {
 	id := uuid.NewString()
 	const privateBearer = "user-private-bearer-token"
 	var calls atomic.Int32
-	_, request := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, request := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -486,7 +515,7 @@ func TestOffensiveDiscoveryRegistrationForwardsOnlySelectedMode(t *testing.T) {
 	const privateHARToken = "uploaded-har-test-credential"
 	har := []byte(`{"log":{"entries":[{"request":{"method":"GET","url":"http://localhost:18888/api/users","headers":[{"name":"Authorization","value":"Bearer ` + privateHARToken + `"}]}}]}}`)
 	var received map[string]string
-	s, _ := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, _ := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/targets" || r.Header.Get("Authorization") != "Bearer "+offensiveTestToken || r.Header.Get("Cookie") != "" {
 			t.Error("upload credentials or scope were not isolated")
 		}
@@ -527,7 +556,7 @@ func TestOffensiveDiscoveryRegistrationForwardsOnlySelectedMode(t *testing.T) {
 
 func TestOffensiveDiscoveryRegistrationRejectsAmbiguousInput(t *testing.T) {
 	var calls atomic.Int32
-	s, _ := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, _ := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		io.WriteString(w, `{}`)
 	}))
@@ -571,7 +600,7 @@ func TestOffensiveDiscoveryRegistrationRejectsAmbiguousInput(t *testing.T) {
 
 func TestOffensiveHARUploadHasIndependentSizeLimit(t *testing.T) {
 	var calls atomic.Int32
-	s, _ := offensiveProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s, _ := offensiveLegacyProxyFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		io.Copy(io.Discard, r.Body)
 		w.WriteHeader(201)

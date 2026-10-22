@@ -66,25 +66,25 @@ func TestPurpleReplayResultsSnapshotsAndManualSeparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overview.Stats.Replayed != baseline.Stats.Replayed+1 || overview.Stats.ReplayPassed != baseline.Stats.ReplayPassed+1 || overview.Stats.Detected != baseline.Stats.Detected || overview.Stats.Blocked != baseline.Stats.Blocked || overview.Stats.Validated != baseline.Stats.Validated {
+	if overview.Stats.Detected != baseline.Stats.Detected || overview.Stats.Blocked != baseline.Stats.Blocked || overview.Stats.Validated != baseline.Stats.Validated {
 		t.Fatalf("replay affected manual counts: %+v", overview.Stats)
+	}
+	overviewJSON, err := json.Marshal(overview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(overviewJSON), "\"replayed\"") || strings.Contains(string(overviewJSON), "\"replay_") {
+		t.Fatalf("removed replay status exposed by overview: %s", overviewJSON)
 	}
 	manual, err := d.GetFindingDefense(ctx, id)
 	if err != nil || manual.State != "untested" || len(manual.Validations) != 0 {
 		t.Fatalf("replay became live observation: %+v %v", manual, err)
 	}
-	// A newer failed replay supersedes the earlier pass in replay-only stats.
+	// Preserve historical snapshots even though replay status is no longer shown in the overview.
 	in.TargetLogs = `{"event.action":"allowed"}`
 	second, err := d.RunDefenseReplay(ctx, id, in)
 	if err != nil || second.Result.Verdict != "fail" {
 		t.Fatalf("failed replay: %+v %v", second, err)
-	}
-	overview, err = d.GetPurpleOverview(ctx, 1, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if overview.Stats.Replayed != baseline.Stats.Replayed+1 || overview.Stats.ReplayPassed != baseline.Stats.ReplayPassed {
-		t.Fatalf("historical pass still counted: %+v", overview.Stats)
 	}
 	list, err = d.ListDefenseReplays(ctx, id)
 	if err != nil || list[0].ID != second.ID {
@@ -103,10 +103,6 @@ func TestPurpleReplayResultsSnapshotsAndManualSeparation(t *testing.T) {
 	}
 	if _, err = d.RunDefenseReplay(ctx, id, in); !errors.Is(err, ErrDefenseConflict) {
 		t.Fatalf("old revision accepted: %v", err)
-	}
-	overview, err = d.GetPurpleOverview(ctx, 1, 100)
-	if err != nil || overview.Stats.ReplayNeedsRevalidation != baseline.Stats.ReplayNeedsRevalidation+1 {
-		t.Fatalf("stale replay stats: %+v %v", overview, err)
 	}
 	in = purpleReplayInput(state)
 	in.ControlLogs = ""

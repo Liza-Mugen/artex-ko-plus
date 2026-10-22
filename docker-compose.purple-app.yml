@@ -1,0 +1,11 @@
+# Optional connection from this ARTEX app to the separately started Purple Lab.
+services:
+  artex:
+    networks:
+      default: {}
+      purple-front: {}
+
+networks:
+  purple-front:
+    external: true
+    name: artex-purple-lab-front

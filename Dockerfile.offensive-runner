@@ -1,23 +1,17 @@
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
-
-ARG SEMGREP_VERSION=1.180.0
-ARG SCHEMATHESIS_VERSION=4.30.1
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git \
-    && rm -rf /var/lib/apt/lists/* \
-    && python -m venv /opt/semgrep \
-    && /opt/semgrep/bin/pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" \
-    && python -m venv /opt/schemathesis \
-    && /opt/schemathesis/bin/pip install --no-cache-dir "schemathesis==${SCHEMATHESIS_VERSION}" \
-    && pip install --no-cache-dir PyYAML==6.0.3
-
+# Diagnostic execution service; retired API/SAST uploads are not served.
+FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS diagnostic-tools
+ARG TARGETARCH
+ARG HTTPX_VERSION=1.12.0
+ARG KATANA_VERSION=1.8.0
+ARG NUCLEI_VERSION=3.11.1
+COPY lab/offensive/install_tools.py /tmp/install_tools.py
+RUN python /tmp/install_tools.py --arch "${TARGETARCH}" --httpx "${HTTPX_VERSION}" --katana "${KATANA_VERSION}" --nuclei "${NUCLEI_VERSION}" && rm /tmp/install_tools.py
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    SEMGREP_BIN=/opt/semgrep/bin/semgrep SCHEMATHESIS_BIN=/opt/schemathesis/bin/st \
-    OFFENSIVE_PORT=8090 OFFENSIVE_DATA_DIR=/data/offensive/runs \
-    OFFENSIVE_BENCHMARK_PATH=/opt/benchmark OFFENSIVE_SCHEMA_PATH=/opt/crapi-schema \
-    OFFENSIVE_RULES_PATH=/app/rules/java-security.yml
+    OFFENSIVE_PORT=8090 OFFENSIVE_DIAGNOSTICS_DIR=/data/offensive/diagnostics \
+    HTTPX_BIN=/usr/local/bin/httpx KATANA_BIN=/usr/local/bin/katana NUCLEI_BIN=/usr/local/bin/nuclei
 WORKDIR /app
-COPY lab/offensive/runner.py /app/runner.py
+FROM diagnostic-tools AS runtime
+COPY lab/offensive/diagnostic_runner.py /app/diagnostic_runner.py
 COPY lab/offensive/api_discovery.py /app/api_discovery.py
-COPY lab/offensive/rules /app/rules
 EXPOSE 8090
-CMD ["python", "/app/runner.py"]
+CMD ["python", "/app/diagnostic_runner.py"]

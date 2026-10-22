@@ -1,6 +1,8 @@
+import configparser
 import importlib.util
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -40,6 +42,19 @@ class FakeSplunk:
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_ag_collector_index_has_searchable_storage_paths(self):
+        root = Path(__file__).resolve().parents[3]
+        override = (root / "docker-compose.purple-lab-ag.yml").read_text()
+        match = re.search(r"^\s*SPLUNK_INDEX:\s*([A-Za-z0-9_]+)\s*$", override, re.MULTILINE)
+        self.assertIsNotNone(match)
+        index = match.group(1)
+        config = configparser.ConfigParser(interpolation=None)
+        config.optionxform = str
+        config.read(root / "lab/purple/splunk/default/indexes.conf")
+        self.assertIn(index, config)
+        for key, directory in (("homePath", "db"), ("coldPath", "colddb"), ("thawedPath", "thaweddb")):
+            self.assertEqual(config[index][key], f"$SPLUNK_DB/{index}/{directory}")
+
     def test_private_files_are_restricted_and_symlinks_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             secret = Path(folder) / "secret"

@@ -171,7 +171,8 @@ func TestPurpleExecutionAPICollectExportAndSourceConflict(t *testing.T) {
 	// An archive may be restored into a database with a reused source ID and
 	// revision. Different config must be rejected before making any request.
 	changedConfig := source.Config
-	changedConfig.Index = "unrelated_restored_index"
+	changedConfig.Streams = append([]securitysource.LogStream(nil), source.Config.Streams...)
+	changedConfig.Streams[0].Index = "unrelated_restored_index"
 	changedRaw, err := json.Marshal(changedConfig)
 	if err != nil {
 		t.Fatal(err)

@@ -94,7 +94,7 @@ func waitDefensiveCaseRun(t *testing.T, s *Server, run *db.DefensiveCaseRun) *db
 }
 func TestDefensiveCaseAuthAndRequestValidation(t *testing.T) {
 	s := &Server{jwtKey: []byte("test-only")}
-	for _, route := range []struct{ method, path string }{{"GET", "/api/defensive/cases"}, {"POST", "/api/defensive/cases"}, {"POST", "/api/defensive/cases/preview"}, {"GET", "/api/defensive/cases/1/export"}, {"POST", "/api/defensive/cases/1/runs"}, {"POST", "/api/defensive/cases/1/runs/1/cancel"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "/api/defensive/cases"}, {"POST", "/api/defensive/cases"}, {"POST", "/api/defensive/cases/preview"}, {"GET", "/api/defensive/cases/1/export"}, {"DELETE", "/api/defensive/cases/1"}, {"POST", "/api/defensive/cases/1/runs"}, {"POST", "/api/defensive/cases/1/runs/1/cancel"}} {
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`)))
 		if w.Code != http.StatusUnauthorized {
@@ -113,6 +113,31 @@ func TestDefensiveCaseAuthAndRequestValidation(t *testing.T) {
 	in.SourceID = 2
 	if err := validateDefensiveCaseRequest(in); err == nil {
 		t.Fatal("file request with remote source accepted")
+	}
+}
+func TestDefensiveCaseDeleteAPI(t *testing.T) {
+	s, request := defensiveAPIFixture(t)
+	c := createAPICase(t, s, request, defensiveAPIInput())
+	path := fmt.Sprintf("/api/defensive/cases/%d", c.ID)
+	run, created, err := s.m.pg.CreateDefensiveCaseRun(t.Context(), c.ID, json.RawMessage(`{}`))
+	if err != nil || !created {
+		t.Fatal("create active run", err)
+	}
+	if w := request("DELETE", path, ""); w.Code != 409 {
+		t.Fatal("active deletion", w.Code, w.Body.String())
+	}
+	if _, err := s.m.pg.CancelDefensiveCaseRun(t.Context(), c.ID, run.ID); err != nil {
+		t.Fatal("cancel", err)
+	}
+	w := request("DELETE", path, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), fmt.Sprintf(`"deleted":"%d"`, c.ID)) {
+		t.Fatal("delete", w.Code, w.Body.String())
+	}
+	if w = request("GET", path, ""); w.Code != 404 {
+		t.Fatal("deleted case still readable", w.Code)
+	}
+	if w = request("DELETE", path, ""); w.Code != 404 {
+		t.Fatal("repeated deletion", w.Code)
 	}
 }
 func TestDefensiveCaseFileNoFindingAndExplicitExport(t *testing.T) {

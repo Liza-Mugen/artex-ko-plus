@@ -87,4 +87,4 @@ detections/tests/attack/run.sh
 
 When you add or retag a rule, update this layer to match — the test fails if a rule technique is missing
 from the layer or a layer technique is absent from the rules. See [`../README.md`](../README.md) and
-[`../../CONTRIBUTING.en.md`](../../CONTRIBUTING.en.md).
+`../../CONTRIBUTING.en.md`.

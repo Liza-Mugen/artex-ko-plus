@@ -313,7 +313,7 @@ func TestPurpleExecutionOverviewLatestAndStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Stats.ExecutionTotal != base.Stats.ExecutionTotal+1 || got.Stats.ExecutionDetected != base.Stats.ExecutionDetected+1 || got.Stats.ExecutionBlocked != base.Stats.ExecutionBlocked+1 || got.Stats.Detected != base.Stats.Detected || got.Stats.Replayed != base.Stats.Replayed {
+	if got.Stats.ExecutionTotal != base.Stats.ExecutionTotal+1 || got.Stats.ExecutionDetected != base.Stats.ExecutionDetected+1 || got.Stats.ExecutionBlocked != base.Stats.ExecutionBlocked+1 || got.Stats.Detected != base.Stats.Detected {
 		t.Fatalf("actual execution counts: %+v", got.Stats)
 	}
 	if _, err := d.SaveDefenseAssessment(ctx, fid, e.ID, defenseExecutionEvidence(e, false, "allowed")); err != nil {

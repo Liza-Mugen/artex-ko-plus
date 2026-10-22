@@ -840,7 +840,7 @@ func unixNanoOrZero(t *time.Time) int64 {
 }
 
 func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Interceptor) *Task {
-	return &Task{
+	t := &Task{
 		ID: strconv.FormatInt(pt.ID, 10), ExpID: pt.ExplorationID,
 		Name:       pt.Name,
 		CategoryID: cloneInt64Ptr(pt.CategoryID), CategoryName: pt.CategoryName,
@@ -858,6 +858,42 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		CoverageEnabled: pt.CoverageEnabled,
 		FirstRunAt:      unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic), notify: make(chan struct{}, 1),
+	}
+	if strings.HasPrefix(pt.Description, "[diagnostic:") {
+		// The task is fail-closed even during the brief bootstrap window before its
+		// immutable scope constraint has been persisted. On restart, restore that
+		// scope from the code-created constraint; ordinary task constraints cannot
+		// broaden it.
+		_ = t.Guard.SetDiagnosticScope(nil)
+		marker := strings.TrimPrefix(pt.Description, "[diagnostic:")
+		if end := strings.IndexByte(marker, ']'); end > 0 {
+			if err := t.Guard.SetDiagnosticRunID(marker[:end]); err != nil {
+				log.Printf("[diagnostic] task %s invalid run marker; artifact access denied: %v", t.ID, err)
+			}
+		}
+		t.refreshDiagnosticScope()
+	}
+	return t
+}
+
+// refreshDiagnosticScope activates the code-created boundary after bootstrap
+// has persisted it. This also covers a queued task created before its bootstrap
+// rows existed, without changing the scope of a task that already began probing.
+func (t *Task) refreshDiagnosticScope() {
+	if t == nil || t.Guard == nil || t.Store == nil || t.Guard.DiagnosticScopeReady() ||
+		!strings.HasPrefix(t.Description, "[diagnostic:") {
+		return
+	}
+	rows, err := t.Store.ListConstraints()
+	if err == nil {
+		var scopes []string
+		scopes, err = guard.DiagnosticScopesFromConstraints(rows)
+		if err == nil {
+			err = t.Guard.SetDiagnosticScope(scopes)
+		}
+	}
+	if err != nil {
+		log.Printf("[diagnostic] task %s scope restore failed; denying tool network access: %v", t.ID, err)
 	}
 }
 

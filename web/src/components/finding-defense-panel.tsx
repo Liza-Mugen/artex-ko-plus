@@ -8,7 +8,7 @@ import { toast } from "sonner";
 
 import { DefenseStateBadge } from "@/components/defense-state-badge";
 import { FindingDefenseExecutionPanel } from "@/components/finding-defense-execution-panel";
-import { FindingDefenseReplayPanel } from "@/components/finding-defense-replay-panel";
+import { FindingDefenseScenarioPanel } from "@/components/finding-defense-scenario-panel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { HttpError } from "@/lib/api";
 import {
   type DefensePlanFields,
+  type DefenseScenario,
   type DetectionResult,
   type FindingDefense,
   type PreventionResult,
@@ -36,16 +37,23 @@ const EMPTY_PLAN: DefensePlanFields = {
   remediation: "",
 };
 const SELECT_CLASS = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50";
-const EXAMPLE_EVENT_RULE = JSON.stringify(
-  { version: 1, all: [{ field: "event.action", op: "eq", value: "access_denied" }] },
-  null,
-  2,
-);
+
+function withoutLegacySplunkCandidates(logSource: string): string {
+  const lines = logSource.split("\n");
+  const kept = lines.filter((line) => !/^\s*Splunk (?:설정 후보|配置候选)[：:]/.test(line));
+  return kept.length === lines.length ? logSource : kept.join("\n").trim();
+}
 
 function planFields(data: FindingDefense): DefensePlanFields {
   if (!data.plan) return { ...EMPTY_PLAN };
   const { hypothesis, log_source, rule_format, rule_text, remediation } = data.plan;
-  return { hypothesis, log_source, rule_format, rule_text, remediation };
+  return {
+    hypothesis,
+    log_source: withoutLegacySplunkCandidates(log_source),
+    rule_format: rule_format === "event_filter" ? "other" : rule_format,
+    rule_text,
+    remediation,
+  };
 }
 
 function localNow() {
@@ -67,8 +75,9 @@ export function FindingDefensePanel({
   const [data, setData] = React.useState<FindingDefense | null>(null);
   const [draft, setDraft] = React.useState<DefensePlanFields>({ ...EMPTY_PLAN });
   const [error, setError] = React.useState("");
+  const [scenarioError, setScenarioError] = React.useState("");
   const [conflictDraft, setConflictDraft] = React.useState<DefensePlanFields | null>(null);
-  const [busy, setBusy] = React.useState<"load" | "plan" | "validation" | "replay" | "execution" | null>("load");
+  const [busy, setBusy] = React.useState<"load" | "scenario" | "plan" | "validation" | "execution" | null>("load");
   const [detection, setDetection] = React.useState<DetectionResult>("not_tested");
   const [prevention, setPrevention] = React.useState<PreventionResult>("not_tested");
   const [observedAt, setObservedAt] = React.useState(localNow);
@@ -85,6 +94,7 @@ export function FindingDefensePanel({
     const seq = ++requestSeq.current;
     setBusy("load");
     setError("");
+    setScenarioError("");
     try {
       const result = await purpleApi.findingDefense(findingId);
       if (seq !== requestSeq.current) return false;
@@ -107,6 +117,7 @@ export function FindingDefensePanel({
 
   const dirty = data !== null && JSON.stringify(draft) !== JSON.stringify(planFields(data));
   const latest = data?.validations?.[0];
+  const scenario = data?.scenario ?? null;
 
   const mutationError = async (e: unknown, keepDraft = false) => {
     if (e instanceof HttpError && e.status === 409) {
@@ -130,6 +141,46 @@ export function FindingDefensePanel({
     } finally {
       setBusy(null);
     }
+  };
+
+  const generateScenario = async () => {
+    if (!data || busy || readOnly || dirty) return;
+    setBusy("scenario");
+    setScenarioError("");
+    try {
+      accept(await purpleApi.generateScenario(findingId));
+      toast.success(t("scenario.generated"));
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) {
+        setScenarioError((await load()) ? t("conflict") : (e as Error).message);
+      } else {
+        setScenarioError((e as Error).message);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const applyScenarioStage = (stage: DefenseScenario["stages"][number]) => {
+    if (!scenario || scenario.state !== "current" || busy || readOnly || dirty) return;
+    const attackStep = scenario.attack_steps.find((step) => step.id === stage.attack_step_id);
+    const hypothesis = [
+      stage.title,
+      attackStep?.description ? `${t("scenario.attackStepInPlan")}: ${attackStep.description}` : "",
+      stage.success_criteria ? `${t("scenario.criteriaInPlan")}: ${stage.success_criteria}` : "",
+      stage.benign_baseline ? `${t("scenario.baselineInPlan")}: ${stage.benign_baseline}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const logSource = stage.log_sources.join("\n");
+    setDraft({
+      ...draft,
+      hypothesis: hypothesis.slice(0, 4000),
+      log_source: logSource.slice(0, 2000),
+      rule_format: "query",
+      rule_text: stage.rule_draft.query.slice(0, 32000),
+    });
+    toast.success(t("scenario.applied"));
   };
 
   const recordValidation = async () => {
@@ -239,6 +290,17 @@ export function FindingDefensePanel({
 
       {data ? (
         <>
+          <FindingDefenseScenarioPanel
+            scenario={scenario}
+            error={scenarioError}
+            readOnly={readOnly}
+            busy={busy !== null}
+            generating={busy === "scenario"}
+            draftDirty={dirty}
+            onGenerate={() => void generateScenario()}
+            onApplyStage={applyScenarioStage}
+          />
+
           <Card>
             <CardHeader>
               <CardTitle>{t("planTitle")}</CardTitle>
@@ -285,7 +347,6 @@ export function FindingDefensePanel({
                       value={draft.rule_format}
                       onChange={(event) => setDraft({ ...draft, rule_format: event.target.value as RuleFormat })}
                     >
-                      <option value="event_filter">{t("replay.eventFilter")}</option>
                       <option value="query">{t("format.query")}</option>
                       <option value="sigma">Sigma</option>
                       <option value="other">{t("format.other")}</option>
@@ -302,25 +363,7 @@ export function FindingDefensePanel({
                       value={draft.rule_text}
                       onChange={(event) => setDraft({ ...draft, rule_text: event.target.value })}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {draft.rule_format === "event_filter" ? t("replay.ruleHelp") : t("draftOnly")}
-                    </p>
-                    {!readOnly ? (
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={!!draft.rule_text.trim()}
-                          onClick={() =>
-                            setDraft({ ...draft, rule_format: "event_filter", rule_text: EXAMPLE_EVENT_RULE })
-                          }
-                        >
-                          {t("replay.fillRule")}
-                        </Button>
-                        <span className="text-xs text-muted-foreground">{t("replay.fillRuleHelp")}</span>
-                      </div>
-                    ) : null}
+                    <p className="text-xs text-muted-foreground">{t("draftOnly")}</p>
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label htmlFor={`${fieldId}-remediation`}>{t("remediation")}</Label>
@@ -344,7 +387,7 @@ export function FindingDefensePanel({
                           <Button type="button" variant="ghost" onClick={() => setDraft(planFields(data))}>
                             {t("discard")}
                           </Button>
-                          <span className="text-xs text-muted-foreground">{t("unsaved")}</span>
+                          <span className="text-muted-foreground text-xs">{t("unsaved")}</span>
                         </>
                       ) : null}
                     </div>
@@ -362,16 +405,6 @@ export function FindingDefensePanel({
             parentBusy={busy !== null && busy !== "execution"}
             onRefresh={load}
             onRunningChange={(running) => setBusy(running ? "execution" : null)}
-          />
-
-          <FindingDefenseReplayPanel
-            findingId={findingId}
-            data={data}
-            dirty={dirty}
-            readOnly={readOnly}
-            parentBusy={busy !== null && busy !== "replay"}
-            onRefresh={load}
-            onRunningChange={(running) => setBusy(running ? "replay" : null)}
           />
 
           <Card>

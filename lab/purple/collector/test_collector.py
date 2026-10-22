@@ -1,6 +1,7 @@
 import hashlib
 import http.server
 import json
+import os
 import shutil
 import ssl
 import subprocess
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 from collector import Collector, EvidenceError, PinnedHEC, native_frames, normalize_native
 
@@ -126,6 +128,9 @@ class NativeTests(unittest.TestCase):
     def test_id_is_stable_from_raw_digest(self):
         self.assertEqual(normalize_native(audit())["id"], normalize_native(audit())["id"])
         self.assertNotEqual(normalize_native(audit())["id"], normalize_native(audit(status=200))["id"])
+        digest = hashlib.sha256(audit()).hexdigest()
+        self.assertEqual(normalize_native(audit())["id"],
+                         str(uuid5(NAMESPACE_URL, "artex-purple-lab-native:" + digest)))
 
     def test_frames_wait_for_complete_final_line(self):
         raw = audit()
@@ -169,6 +174,27 @@ class StorageTests(unittest.TestCase):
         self.collector.ingest()
         self.collector.export()
         self.assertEqual(len((self.directory / "audit.jsonl").read_text().splitlines()), 1)
+
+    def test_legacy_mount_device_change_keeps_the_same_source_cursor(self):
+        self.collector.ingest()
+        with self.collector.db:
+            self.collector._save_state("source_identity", f"999:{os.stat(self.source).st_ino}")
+        with self.source.open("ab") as stream:
+            stream.write(b"\n" + audit(status=200))
+
+        self.collector.ingest()
+
+        self.assertEqual(self.collector.db.execute("SELECT count(*) FROM events").fetchone()[0], 2)
+        self.assertEqual(int(self.collector._state("offset")), self.source.stat().st_size)
+        self.assertTrue(self.collector._state("source_identity").startswith("v2:"))
+
+    def test_checkpoint_detects_in_place_source_rewrite(self):
+        self.collector.ingest()
+        self.source.write_bytes(audit(status=200))
+
+        with self.assertRaisesRegex(EvidenceError, "rotated"):
+            self.collector.ingest()
+        self.assertEqual(self.collector.db.execute("SELECT count(*) FROM events").fetchone()[0], 1)
 
     def test_outbox_retries_while_preserving_local_record(self):
         class FakeHEC:
