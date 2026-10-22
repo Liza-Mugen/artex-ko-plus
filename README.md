@@ -34,7 +34,6 @@ Offensive의 ARTEX 작업이 기록한 취약점에서 대상 자산, 경로, �
 - v1.1 : aegisloop offensive(API 진단 & 소스코드 진단 기능 추가) + defensive + loop.
 
 ### Offensive · 취약점 진단
->>>>>>> d30c0769d00a075dce76f173a0c4323e717818a3
 
 ### 2. 방어 검증
 
