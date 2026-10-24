@@ -20,32 +20,47 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type AegisOverview, aegisApi, type DefensiveCaseSummary, defensiveApi } from "@/lib/defensive-api";
+import { type AegisOverview, aegisApi } from "@/lib/defensive-api";
+import { type HuntingRunSummary, huntingApi, huntingRunActive, huntingStatusLabel } from "@/lib/hunting-api";
 
 export default function DashboardPage() {
   const t = useTranslations("Aegis");
   const [data, setData] = React.useState<AegisOverview | null>(null);
-  const [cases, setCases] = React.useState<DefensiveCaseSummary[]>([]);
+  const [hunts, setHunts] = React.useState<HuntingRunSummary[] | null>(null);
+  const [historyTruncated, setHistoryTruncated] = React.useState(false);
   const [error, setError] = React.useState("");
-  const [caseError, setCaseError] = React.useState("");
+  const [huntError, setHuntError] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const refresh = React.useCallback(async () => {
     setLoading(true);
-    const results = await Promise.allSettled([aegisApi.overview(), defensiveApi.list()]);
+    const results = await Promise.allSettled([aegisApi.overview(), huntingApi.list()]);
     if (results[0].status === "fulfilled") {
       setData(results[0].value);
       setError("");
     } else setError((results[0].reason as Error).message);
     if (results[1].status === "fulfilled") {
-      setCases(results[1].value.cases ?? []);
-      setCaseError("");
-    } else setCaseError((results[1].reason as Error).message);
+      setHunts(results[1].value.hunts ?? []);
+      setHistoryTruncated(Boolean(results[1].value.history_truncated));
+      setHuntError("");
+    } else {
+      setHunts(null);
+      setHistoryTruncated(false);
+      setHuntError((results[1].reason as Error).message);
+    }
     setLoading(false);
   }, []);
   React.useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  // The API returns at most 50 recent hunts and does not provide a total.
+  const displayedHuntsMayBeTruncated = historyTruncated || (hunts?.length ?? 0) >= 50;
+  let defensiveSecondary = "";
+  if (huntError) defensiveSecondary = t("overview.huntingUnavailable");
+  else if (hunts)
+    defensiveSecondary = t("overview.defensiveCounts", {
+      active: hunts.filter((hunt) => huntingRunActive(hunt.status)).length,
+    });
   const areas = [
     {
       id: "offensive",
@@ -64,14 +79,12 @@ export default function DashboardPage() {
     },
     {
       id: "defensive",
-      href: "/defensive/",
+      href: "/defensive/hunting/",
       icon: ShieldCheckIcon,
       color: "text-sky-600 dark:text-sky-400",
-      count: data?.defensive.cases,
-      metric: "cases",
-      secondary: data
-        ? t("overview.defensiveCounts", { active: data.defensive.active_runs, sources: data.defensive.sources })
-        : "",
+      count: hunts ? `${hunts.length}${displayedHuntsMayBeTruncated ? "+" : ""}` : undefined,
+      metric: "hunts",
+      secondary: defensiveSecondary,
     },
     {
       id: "closedLoop",
@@ -114,7 +127,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-baseline gap-2">
-                {loading && !data ? (
+                {loading && area.count === undefined ? (
                   <Skeleton className="h-9 w-12" />
                 ) : (
                   <span className="text-3xl font-semibold tabular-nums">{area.count ?? "—"}</span>
@@ -159,45 +172,51 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div className="space-y-1.5">
-              <CardTitle className="text-base">{t("overview.recentCases")}</CardTitle>
+              <CardTitle className="text-base">{t("overview.recentHunts")}</CardTitle>
               <CardDescription>{t("overview.recentHelp")}</CardDescription>
             </div>
             <Button variant="ghost" size="sm" asChild>
-              <Link href="/defensive/">
+              <Link href="/defensive/hunting/">
                 {t("all")}
                 <ArrowRightIcon />
               </Link>
             </Button>
           </CardHeader>
           <CardContent className="space-y-3">
-            {caseError ? (
+            {huntError ? (
               <Alert variant="destructive">
-                <AlertDescription>{caseError}</AlertDescription>
+                <AlertDescription>{huntError}</AlertDescription>
               </Alert>
             ) : null}
-            {!cases.length && !caseError ? (
+            {hunts && displayedHuntsMayBeTruncated ? (
+              <p className="text-xs text-muted-foreground">{t("overview.huntingTruncated")}</p>
+            ) : null}
+            {!hunts?.length && !huntError ? (
               <div className="rounded-lg border border-dashed p-6 text-center">
                 <FileSearchIcon className="mx-auto mb-3 size-6 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">{loading ? t("loading") : t("overview.emptyCases")}</p>
-                <Button className="mt-4" size="sm" asChild>
-                  <Link href="/defensive/?new=1">{t("defensive.newCase")}</Link>
-                </Button>
+                <p className="text-sm text-muted-foreground">{loading ? t("loading") : t("overview.emptyHunts")}</p>
+                {hunts ? (
+                  <Button className="mt-4" size="sm" asChild>
+                    <Link href="/defensive/hunting/">{t("overview.start.defend")}</Link>
+                  </Button>
+                ) : null}
               </div>
             ) : (
-              cases.slice(0, 4).map((item) => (
+              hunts?.slice(0, 4).map((item) => (
                 <Link
                   key={item.id}
-                  href={`/defensive/?case=${encodeURIComponent(item.id)}`}
+                  href={`/defensive/hunting/?run=${encodeURIComponent(item.id)}`}
                   className="block space-y-2 rounded-lg border p-4 transition-colors hover:bg-muted/50"
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-sm">{item.title}</span>
-                    <Badge variant="outline">{item.source_kind === "splunk" ? "Splunk" : t("defensive.file")}</Badge>
+                    <span className="font-medium text-sm">
+                      {item.term || item.request?.term || t("overview.untitledHunt", { id: item.id })}
+                    </span>
+                    <Badge variant="outline">{huntingStatusLabel(item.status)}</Badge>
                     <span className="ml-auto text-xs text-muted-foreground">
                       {new Date(item.created_at).toLocaleString()}
                     </span>
                   </div>
-                  <p className="line-clamp-2 text-sm text-muted-foreground">{item.summary}</p>
                 </Link>
               ))
             )}
@@ -211,7 +230,7 @@ export default function DashboardPage() {
           <CardContent className="space-y-3">
             {[
               { href: "/function/tasks/", icon: TargetIcon, key: "attack" },
-              { href: "/defensive/?new=1", icon: FileSearchIcon, key: "defend" },
+              { href: "/defensive/hunting/", icon: FileSearchIcon, key: "defend" },
               { href: "/closed-loop/", icon: WorkflowIcon, key: "improve" },
             ].map((item) => (
               <Link

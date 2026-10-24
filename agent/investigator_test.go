@@ -255,6 +255,29 @@ func TestInvestigatorModelBudgetsStopBeforeProvider(t *testing.T) {
 	}
 }
 
+func TestInvestigatorTimeoutBudgetAllowsBoundedOverride(t *testing.T) {
+	for _, tc := range []struct{ requested, want int }{
+		{0, 240},
+		{420, 420},
+		{3600, 420},
+	} {
+		got := investigatorBudget(InvestigatorBudget{TimeoutSeconds: tc.requested}).TimeoutSeconds
+		if got != tc.want {
+			t.Fatalf("timeout %d: got %d, want %d", tc.requested, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ requested, want int }{
+		{0, 180000},
+		{512 << 10, 512 << 10},
+		{1 << 20, 512 << 10},
+	} {
+		got := investigatorBudget(InvestigatorBudget{MaxTokens: tc.requested}).MaxTokens
+		if got != tc.want {
+			t.Fatalf("token envelope %d: got %d, want %d", tc.requested, got, tc.want)
+		}
+	}
+}
+
 func TestInvestigatorModelFailurePreservesPriorEvidence(t *testing.T) {
 	o := certFixture()
 	script := certHappyScript()[:5]

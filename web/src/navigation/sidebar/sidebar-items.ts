@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Network,
   Plug,
+  Radar,
   Radio,
   ScrollText,
   Settings2,
@@ -86,7 +87,7 @@ export const sidebarItems: NavGroup[] = [
         title: "Defensive",
         icon: ShieldAlert,
         subItems: [
-          { id: "defensive-cases", title: "Cases", url: "/defensive", icon: ShieldAlert },
+          { id: "defensive-hunting", title: "Autonomous hunting", url: "/defensive/hunting", icon: Radar },
           { id: "security-sources", title: "Log connections", url: "/function/purple/sources", icon: Plug },
         ],
       },

@@ -22,8 +22,11 @@ import zipfile
 MANIFEST = "SOURCE_MANIFEST.sha256"
 GITHUB_README_TEMPLATE = "scripts/release-readme.md"
 GITHUB_GUIDE = "docs/FINDING_DEFENSE_INVESTIGATION_KO.md"
+GITHUB_DIAGNOSIS_GUIDE = "docs/OFFENSIVE_DIAGNOSIS_KO.md"
+GITHUB_HUNTING_GUIDE = "docs/AUTONOMOUS_HUNTING_KO.md"
 GITHUB_MARKDOWN = frozenset({
-    "README.md", GITHUB_GUIDE, "docs/defense-ko.md", "docs/defense-en.md",
+    "README.md", GITHUB_GUIDE, GITHUB_DIAGNOSIS_GUIDE, GITHUB_HUNTING_GUIDE,
+    "docs/defense-ko.md", "docs/defense-en.md",
 })
 GITHUB_MARKDOWN_PREFIXES = ("skills/", "detections/")
 GITHUB_EXCLUDED_PATH_PREFIXES = ("docs/evidence/", "docs/legacy-assessments/", "screenshots/")
@@ -68,6 +71,8 @@ def git(root, *args):
 
 def exclusion_reason(relative, *, github=False):
     """Return a public-release exclusion reason, or None for source files."""
+    if relative == "docker-compose.local-restored.yml":
+        return "local-only database restore override"
     parts = PurePosixPath(relative).parts
     lowered = tuple(part.lower() for part in parts)
     name = lowered[-1]
@@ -217,7 +222,8 @@ def build_release(root, output, name, *, github=False):
     root = Path(root).resolve()
     output = Path(output).absolute()
     if github:
-        for required in ("README.md", GITHUB_README_TEMPLATE, GITHUB_GUIDE):
+        for required in ("README.md", GITHUB_README_TEMPLATE, GITHUB_GUIDE,
+                         GITHUB_DIAGNOSIS_GUIDE, GITHUB_HUNTING_GUIDE):
             if checked_source(root, required) is None:
                 raise ReleaseError(f"Required GitHub distribution file is missing: {required}")
     release = output / name

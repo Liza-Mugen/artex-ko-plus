@@ -57,7 +57,7 @@ func investigatorBudget(b InvestigatorBudget) InvestigatorBudget {
 		}
 		return v
 	}
-	return InvestigatorBudget{MaxRounds: clamp(b.MaxRounds, 3, 3), MaxModelCalls: clamp(b.MaxModelCalls, 18, 18), MaxQueries: clamp(b.MaxQueries, 12, 12), MaxTokens: clamp(b.MaxTokens, 180000, 180000), TimeoutSeconds: clamp(b.TimeoutSeconds, 240, 240)}
+	return InvestigatorBudget{MaxRounds: clamp(b.MaxRounds, 3, 3), MaxModelCalls: clamp(b.MaxModelCalls, 18, 18), MaxQueries: clamp(b.MaxQueries, 12, 12), MaxTokens: clamp(b.MaxTokens, 180000, 512<<10), TimeoutSeconds: clamp(b.TimeoutSeconds, 240, 420)}
 }
 
 // RunInvestigation reuses ARTEX's agentcore session/harness/provider/capture

@@ -21,6 +21,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/hunting"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/llmrec"
@@ -148,6 +149,10 @@ type Server struct {
 	// scenarioMu makes repeated generate requests share the cached draft before
 	// another paid model call starts. Generation is intentionally bounded to one.
 	scenarioMu sync.Mutex
+	// Vulnerability-led hunting is independent of the existing scenario workflow.
+	huntMu       sync.Mutex
+	huntCancel   map[int64]context.CancelFunc
+	huntResearch *hunting.Researcher // optional trusted runtime adapter, never user input
 
 	// triggerQ buffers P3 trigger fires PER AGENT. A per-agent "pump" launches runs up
 	// to a concurrency limit derived from the agent's策略: serial → limit 1 (+ optional
@@ -255,6 +260,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		}
 		if _, err := m.pg.RecoverDefensiveCaseRuns(ctx); err != nil {
 			log.Printf("[defensive] recover: %v", err)
+		}
+		if _, err := m.pg.RecoverHunts(ctx); err != nil {
+			log.Printf("[hunting] recover: %v", err)
 		}
 		agent.PromptOverride = func(key string) (string, bool) {
 			a, err := m.pg.GetAgentByKey(key)
@@ -854,6 +862,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerFindingTraffic(mux)
 	s.registerPurple(mux)
 	s.registerDefensiveCases(mux)
+	s.registerHunts(mux)
 	s.registerClosedLoop(mux)
 	mux.HandleFunc("GET /api/aegis/overview", s.aegisOverview)
 	mux.HandleFunc("GET /api/exploration/findings/{id}", s.getFinding)

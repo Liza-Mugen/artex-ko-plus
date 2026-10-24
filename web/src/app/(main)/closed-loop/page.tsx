@@ -648,11 +648,7 @@ function OfflineClosedLoopPanel() {
                   </Button>
                 ) : null}
                 {selected.input.case_id ? (
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={`/defensive?case=${encodeURIComponent(selected.input.case_id)}`}>
-                      {t("linkedCase", { id: selected.input.case_id })}
-                    </Link>
-                  </Button>
+                  <Badge variant="outline">{t("linkedCase", { id: selected.input.case_id })}</Badge>
                 ) : null}
               </div>
               {selected.input.notes ? <p className="whitespace-pre-wrap text-sm">{selected.input.notes}</p> : null}

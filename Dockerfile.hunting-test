@@ -1,0 +1,12 @@
+FROM golang:1.26.3-bookworm AS tests
+WORKDIR /src
+ENV CGO_ENABLED=0 GOMAXPROCS=4
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go test -p 4 -c -o /out/hunting.test ./hunting && \
+    go test -p 4 -c -o /out/db.test ./db && \
+    go test -p 4 -c -o /out/server.test ./server
+CMD ["/bin/sh", "-c", "/out/hunting.test -test.v && /out/db.test -test.v -test.run '^Test(Hunt|Defensive|Investigation)' && /out/server.test -test.v -test.run '^Test(Hunt|Defensive|Investigation|Scenario)'"]

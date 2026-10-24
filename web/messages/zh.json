@@ -4315,7 +4315,7 @@
       "offensive": "Offensive",
       "offensive-overview": "诊断概览",
       "defensive": "Defensive",
-      "defensive-cases": "告警与事件调查",
+      "defensive-hunting": "自主威胁狩猎",
       "security-sources": "日志连接",
       "closed-loop": "Closed-loop",
       "loop-cycles": "改进与性能评估",
@@ -4323,7 +4323,7 @@
     },
     "overview": {
       "title": "连接攻击与防御的安全运营",
-      "description": "分别启动资产诊断与日志调查，关联证据并验证改进前后的检测性能。",
+      "description": "启动资产诊断与基于漏洞的自主威胁狩猎，依据证据验证防御与改进结果。",
       "area": {
         "offensive": "Offensive",
         "defensive": "Defensive",
@@ -4331,38 +4331,41 @@
       },
       "help": {
         "offensive": "诊断资产，查看漏洞与复现证据。",
-        "defensive": "从日志与告警出发调查假设，保留判断依据。",
+        "defensive": "调查漏洞和攻击手法，在 Splunk 日志中寻找攻击痕迹。",
         "closedLoop": "关联攻防结果，评估检测规则改进前后的表现。"
       },
       "metric": {
         "tasks": "诊断任务",
-        "cases": "调查事件",
+        "hunts": "近期狩猎",
         "cycles": "评估记录"
       },
       "offensiveCounts": "运行中 {active} · 漏洞 {findings} · 资产 {assets}",
-      "defensiveCounts": "运行中的独立调查 {active} · 日志连接 {sources}",
+      "defensiveCounts": "所显示的运行中记录 {active} 条",
+      "huntingUnavailable": "无法查看威胁狩猎列表。",
+      "huntingTruncated": "最多显示最近 50 条记录，无法确认全部记录数。",
       "loopCounts": "使用已保存的评估数据查看改进效果。",
       "flowTitle": "用同一证据关联攻防结果",
-      "flowHelp": "独立启动各项工作，依据关联证据决定下一步改进。",
+      "flowHelp": "查看诊断与自主狩猎的证据，决定下一步验证和改进。",
       "flow": {
         "attack": "诊断与复现证据",
-        "defend": "日志调查与检测验证",
+        "defend": "基于漏洞的狩猎与检测验证",
         "improve": "规则改进与对比评估"
       },
-      "metricsBoundary": "概览统计来自已保存的任务与事件。检测准确度与误报率在 Closed-loop 中使用带有真值标签的评估数据计算。",
-      "recentCases": "最近调查事件",
-      "recentHelp": "无需漏洞诊断结果，也可以从已保存的日志开始调查。",
-      "emptyCases": "暂无调查事件。准备日志证据以开始第一个事件。",
+      "metricsBoundary": "诊断与评估统计基于已保存的任务。自主狩猎统计仅涵盖最近最多 50 条记录；检测准确度和误报率由 Closed-loop 使用带真值标签的评估数据计算。",
+      "recentHunts": "最近的自主威胁狩猎",
+      "recentHelp": "调查漏洞和攻击手法，查看授权 Splunk 范围内的证据。",
+      "emptyHunts": "暂无自主威胁狩猎记录。开始第一次狩猎吧。",
+      "untitledHunt": "狩猎 #{id}",
       "startTitle": "从哪里开始",
       "startHelp": "根据当前持有的证据选择工作入口。",
       "start": {
         "attack": "启动诊断任务",
-        "defend": "从日志开始调查",
+        "defend": "开始自主威胁狩猎",
         "improve": "比较检测规则"
       },
       "startHint": {
         "attack": "指定资产与诊断范围。",
-        "defend": "准备文件或 Splunk 日志。",
+        "defend": "指定漏洞和授权的 Splunk 范围。",
         "improve": "用相同评估数据比较改进前后的结果。"
       },
       "generated": "统计时间：{at}"

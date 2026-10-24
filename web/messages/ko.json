@@ -4315,7 +4315,7 @@
       "offensive": "Offensive",
       "offensive-overview": "진단 현황",
       "defensive": "Defensive",
-      "defensive-cases": "경보·침해 조사",
+      "defensive-hunting": "자율헌팅",
       "security-sources": "로그 연결",
       "closed-loop": "Closed-loop",
       "loop-cycles": "개선·성능 평가",
@@ -4323,7 +4323,7 @@
     },
     "overview": {
       "title": "공격·방어를 연결하는 보안 운영",
-      "description": "자산 진단과 로그 기반 조사를 각각 시작하고, 근거를 연결해 개선 전후의 탐지 성능을 확인하세요.",
+      "description": "자산 진단과 취약점 기반 자율 헌팅을 시작하고, 확보한 근거로 방어 검증과 개선 결과를 확인하세요.",
       "area": {
         "offensive": "Offensive",
         "defensive": "Defensive",
@@ -4331,38 +4331,41 @@
       },
       "help": {
         "offensive": "자산을 진단하고 취약점과 재현 근거를 확인합니다.",
-        "defensive": "로그와 경보에서 출발해 가설을 조사하고 판단 근거를 남깁니다.",
+        "defensive": "취약점·공격 기법을 조사하고 Splunk 로그에서 공격 흔적을 찾습니다.",
         "closedLoop": "공격·방어 결과를 연결해 탐지 규칙의 개선 전후를 평가합니다."
       },
       "metric": {
         "tasks": "진단 작업",
-        "cases": "조사 사건",
+        "hunts": "최근 헌팅",
         "cycles": "평가 기록"
       },
       "offensiveCounts": "진행 중 {active} · 취약점 {findings} · 자산 {assets}",
-      "defensiveCounts": "진행 중 독립 조사 {active} · 로그 연결 {sources}",
+      "defensiveCounts": "표시된 실행 중 {active}건",
+      "huntingUnavailable": "헌팅 목록을 확인할 수 없습니다.",
+      "huntingTruncated": "최근 최대 50건만 표시합니다. 전체 기록 수는 확인할 수 없습니다.",
       "loopCounts": "기록된 평가 데이터를 바탕으로 개선 효과를 확인합니다.",
       "flowTitle": "공격 결과와 방어 결과를 같은 근거로 연결",
-      "flowHelp": "각 업무를 독립적으로 시작하고, 연결된 증거로 다음 개선을 결정합니다.",
+      "flowHelp": "진단과 자율 헌팅의 근거를 확인하고 다음 검증·개선을 결정합니다.",
       "flow": {
         "attack": "진단 · 재현 근거 확보",
-        "defend": "로그 조사 · 탐지 확인",
+        "defend": "취약점 기반 헌팅 · 탐지 확인",
         "improve": "규칙 개선 · 비교 평가"
       },
-      "metricsBoundary": "통합 수치는 저장된 작업과 사건의 개수입니다. 탐지 정확도·오탐률은 정답 라벨이 있는 평가 데이터로 Closed-loop에서 계산합니다.",
-      "recentCases": "최근 조사 사건",
-      "recentHelp": "취약점 진단 없이도 저장한 로그에서 조사를 시작할 수 있습니다.",
-      "emptyCases": "아직 조사 사건이 없습니다. 로그 근거를 준비해 첫 사건을 시작하세요.",
+      "metricsBoundary": "진단·평가 수치는 저장된 작업 기준입니다. 자율 헌팅 수치는 조회한 최근 최대 50건 기준이며, 탐지 정확도·오탐률은 Closed-loop의 정답 라벨이 있는 평가 데이터로 계산합니다.",
+      "recentHunts": "최근 자율 헌팅",
+      "recentHelp": "취약점·공격 기법을 조사하고 허용된 Splunk 범위의 근거를 확인합니다.",
+      "emptyHunts": "아직 자율 헌팅 기록이 없습니다. 첫 헌팅을 시작하세요.",
+      "untitledHunt": "헌팅 #{id}",
       "startTitle": "어디에서 시작할까요",
       "startHelp": "현재 확보한 근거에 맞는 업무로 들어가세요.",
       "start": {
         "attack": "진단 작업 시작",
-        "defend": "로그에서 조사 시작",
+        "defend": "자율 헌팅 시작",
         "improve": "탐지 규칙 비교"
       },
       "startHint": {
         "attack": "자산과 진단 범위를 지정합니다.",
-        "defend": "파일 또는 Splunk 로그를 준비합니다.",
+        "defend": "취약점과 허용된 Splunk 범위를 지정합니다.",
         "improve": "같은 평가 데이터로 개선 전후를 비교합니다."
       },
       "generated": "집계 시각: {at}"

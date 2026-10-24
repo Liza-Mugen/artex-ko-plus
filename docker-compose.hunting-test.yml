@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hunting_test
+      POSTGRES_DB: hunting_test
+      POSTGRES_PASSWORD: isolated-hunting-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hunting_test -d hunting_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.hunting-test
+    environment:
+      ARTEX_PG_DSN: postgres://hunting_test:isolated-hunting-test-only@postgres:5432/hunting_test?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+networks:
+  default:
+    internal: true

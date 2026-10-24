@@ -1648,3 +1648,17 @@ CREATE TABLE IF NOT EXISTS offensive_candidate_reviews (
     owner TEXT NOT NULL DEFAULT '',
     lease_until TIMESTAMPTZ
 );
+
+-- Independent vulnerability-led Defensive hunting; no scenario/finding FK.
+CREATE TABLE IF NOT EXISTS defensive_hunts (
+    id BIGSERIAL PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','insufficient_data','budget_exhausted','cancelled','interrupted','model_error','research_failed','failed')),
+    request JSONB NOT NULL CHECK (jsonb_typeof(request)='object'),
+    events JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(events)='array'),
+    result JSONB NOT NULL DEFAULT '{}',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS defensive_hunts_one_active
+    ON defensive_hunts ((true)) WHERE status IN ('queued','running');

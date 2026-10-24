@@ -57,7 +57,7 @@ class PackageReleaseTests(unittest.TestCase):
             "demo-data/database", "web/node_modules/pkg/index.js", "web/.next/app.js",
             "web/out/index.html", ".aws/config", ".codex/history.json", ".agents/state",
             "dist/artex", "server/webui/dist/index.html", "artex", "artex.new",
-            ".pnpm-store/cache/metadata.json",
+            ".pnpm-store/cache/metadata.json", "docker-compose.local-restored.yml",
         ]
         for relative in excluded:
             self.write(relative, tracked=True)
@@ -87,8 +87,10 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertFalse((result["folder"] / "removed.py").exists())
 
     def test_github_distribution_uses_current_guide_without_history_markdown(self):
-        self.write("scripts/release-readme.md", "Release README\n")
+        self.write("scripts/release-readme.md", "[진단 가이드](docs/OFFENSIVE_DIAGNOSIS_KO.md)\n")
         self.write("docs/FINDING_DEFENSE_INVESTIGATION_KO.md", "Current guide\n")
+        self.write("docs/OFFENSIVE_DIAGNOSIS_KO.md", "Current diagnosis guide\n")
+        self.write("docs/AUTONOMOUS_HUNTING_KO.md", "Current hunting guide\n")
         self.write("CHANGELOG.md", "Old changes\n", tracked=True)
         self.write("docs/evidence/old-run.md", "Historical run\n", tracked=True)
         self.write("docs/evidence/images/old-run.jpg", "image\n", tracked=True)
@@ -97,8 +99,13 @@ class PackageReleaseTests(unittest.TestCase):
         self.write("detections/sigma/README.ko.md", "[Old changes](../../CHANGELOG.md)\n[Old section](../../README.md#old-section)\n", tracked=True)
         result = self.build(github=True)
         folder = result["folder"]
-        self.assertEqual((folder / "README.md").read_text(), "Release README\n")
+        self.assertEqual((folder / "README.md").read_text(),
+                         "[진단 가이드](docs/OFFENSIVE_DIAGNOSIS_KO.md)\n")
         self.assertEqual((folder / "docs/FINDING_DEFENSE_INVESTIGATION_KO.md").read_text(), "Current guide\n")
+        self.assertEqual((folder / "docs/OFFENSIVE_DIAGNOSIS_KO.md").read_text(),
+                         "Current diagnosis guide\n")
+        self.assertEqual((folder / "docs/AUTONOMOUS_HUNTING_KO.md").read_text(),
+                         "Current hunting guide\n")
         self.assertTrue((folder / "skills/sample/SKILL.md").is_file())
         self.assertEqual((folder / "detections/sigma/README.ko.md").read_text(), "Old changes\nOld section\n")
         self.assertEqual(result["removed_links"], 2)
@@ -107,6 +114,23 @@ class PackageReleaseTests(unittest.TestCase):
             "docs/evidence/images/old-run.jpg", "docs/offensive-diagnostics.md",
         ):
             self.assertFalse((folder / relative).exists(), relative)
+
+    def test_github_distribution_requires_diagnosis_guide(self):
+        self.write("scripts/release-readme.md", "Release README\n")
+        self.write("docs/FINDING_DEFENSE_INVESTIGATION_KO.md", "Current guide\n")
+        with self.assertRaisesRegex(packager.ReleaseError,
+                                    "docs/OFFENSIVE_DIAGNOSIS_KO.md"):
+            self.build(github=True)
+        self.assertFalse(self.output.exists())
+
+    def test_github_distribution_requires_hunting_guide(self):
+        self.write("scripts/release-readme.md", "Release README\n")
+        self.write("docs/FINDING_DEFENSE_INVESTIGATION_KO.md", "Current guide\n")
+        self.write("docs/OFFENSIVE_DIAGNOSIS_KO.md", "Current diagnosis guide\n")
+        with self.assertRaisesRegex(packager.ReleaseError,
+                                    "docs/AUTONOMOUS_HUNTING_KO.md"):
+            self.build(github=True)
+        self.assertFalse(self.output.exists())
 
     def test_rejects_symbolic_links_without_creating_release(self):
         secret = self.base / "outside.txt"
